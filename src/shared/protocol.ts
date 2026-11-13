@@ -244,6 +244,8 @@ export interface GameView {
   /** Marbles the viewer may move this turn (own, or partner's after finishing). Empty for spectators. */
   controls: MarbleId[];
   paused: boolean;
+  /** The viewer holds the very first turn of this game and may still use the one Skip. */
+  canSkip: boolean;
 }
 
 export type Phase = 'lobby' | 'playing' | 'ended';
@@ -300,6 +302,8 @@ export type ClientMsg =
   | { t: 'play'; cardId: string; moves: Move[] }
   /** Ask for legal plays (help highlight). Reply: {t:'hint'}. Never auto-plays. */
   | { t: 'hint' }
+  /** Only the player holding the very first turn of a game, once per game: pass the turn without losing a card. */
+  | { t: 'skip' }
   /** Host: new game after a win. */
   | { t: 'again' }
   /** Host: back to lobby (ends current game). */
@@ -354,7 +358,9 @@ export type EventKind =
   | 'shuffle' | 'deal' | 'throw' | 'hop' | 'out' | 'capture' | 'swap'
   | 'burn' | 'discard' | 'home' | 'finish' | 'win' | 'pause' | 'resume'
   /** win = first team finished (play continues); teamDone = second team finished; over = game ended. */
-  | 'teamDone' | 'over';
+  | 'teamDone' | 'over'
+  /** The current player passed the turn without throwing a card. */
+  | 'skip';
 
 export interface GameEvent {
   kind: EventKind;
@@ -377,7 +383,9 @@ export type ErrorCode =
   | 'name_taken' | 'not_named' | 'host_taken' | 'vote_open' | 'vote_cooldown' | 'no_vote'
   | 'not_seated' | 'has_partner' | 'no_request' | 'teams_incomplete' | 'chat'
   /** Kicked recently (30 min): that name cannot be used, and that network may only spectate. */
-  | 'banned';
+  | 'banned'
+  /** Skip refused: only the very first turn of a game, once. */
+  | 'no_skip';
 
 /** Informational toasts (not errors). name/by are display names (render with textContent). */
 export type NoticeCode =

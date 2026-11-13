@@ -53,7 +53,8 @@
 .chatlist { flex: 1; min-height: 120px; overflow-y: auto; overscroll-behavior: contain; }
 .chatline { align-items: flex-start; min-height: 0; }
 .chatline.mine { background: #4A331F; }
-.chattext { overflow-wrap: anywhere; font-size: var(--fs-sm); line-height: var(--lh-sm); }
+.chatline > div { min-width: 8em; }
+.chattext { overflow-wrap: break-word; word-break: normal; font-size: var(--fs-sm); line-height: var(--lh-sm); }
 .chatline .btn { min-height: 36px; padding-inline: var(--sp-3); font-size: var(--fs-xs); }
 
 /* Real clock (round face + hands + digital time) and the always-visible start bar */
@@ -80,6 +81,10 @@
 /* Bigger, clearer joke buttons: the dock one shows a real label, and a wide one sits at the bottom of the table and the lobby */
 .dock-joke { width: 56px; min-height: 56px; border-radius: 28px; padding: 2px 0; }
 .dock-joke .dock-lbl { font-size: 11px; line-height: 12px; color: var(--brass-300); font-weight: 600; }
+/* Chat: labelled like the joke button so it is findable during the game too */
+.dock-chat { width: 56px; min-height: 56px; border-radius: 28px; padding: 2px 0; }
+.dock-chat .ic { width: 22px; height: 22px; }
+.dock-chat .dock-lbl { font-size: 11px; line-height: 12px; color: var(--cream-200); font-weight: 600; }
 .joke-bottom { border-color: var(--brass-300); color: var(--brass-300); background: rgba(43,29,18,.88); min-width: 0; padding-inline: var(--sp-4); }
 
 /* ===== Lobby layout fix (phones 320-768): nothing floats over content ===== */

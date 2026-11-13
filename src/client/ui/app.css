@@ -147,6 +147,16 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: var(--sp-2) 0; 
   background: rgba(59,40,24,.96); border: 1px solid var(--brass-700); border-radius: var(--r-lg); box-shadow: var(--sh-3); }
 .confirm .info { flex: 1 1 100%; text-align: center; font-size: var(--fs-sm); line-height: var(--lh-sm); }
 .confirm .btn { flex: 1 1 40%; min-width: 0; padding-inline: var(--sp-3); }
+/* Throw bar (card selected): above the dock and the 3D hand strip; "ارمِ" is the big gold button. */
+.table.confirming .confirm { z-index: 13; }
+.confirm .throw-btn { flex: 2 1 55%; min-height: 52px; font-size: var(--fs-lg, 20px); font-weight: 700; }
+.confirm .throw-btn[disabled] { opacity: .55; box-shadow: none; }
+.confirm .alt { flex: 1 1 100%; display: flex; gap: var(--sp-2); align-items: center; justify-content: center; font-size: var(--fs-sm); }
+.confirm .alt .btn { flex: 0 1 auto; }
+/* First-turn Skip: right side, above the bottom actions row; hidden while the throw bar is up. */
+.skip-btn { position: absolute; z-index: 5; right: calc(var(--sp-3) + var(--safe-e)); bottom: calc(var(--sp-3) + var(--safe-b) + var(--tap) + var(--sp-2)); background: rgba(43,29,18,.9); }
+.table.confirming .skip-btn { display: none; }
+.table:not(.no2d) .skip-btn { bottom: calc(var(--hand-h) + var(--safe-b) + var(--sp-2) + var(--tap) + var(--sp-2)); }
 .finbar { position: absolute; inset-inline: 0; top: calc(var(--status-h) + var(--safe-t)); z-index: 6; padding: var(--sp-1) var(--sp-4); background: var(--felt-600); text-align: center; font-size: var(--fs-sm); }
 .viewpick { position: absolute; z-index: 5; right: calc(var(--sp-3) + var(--safe-e)); bottom: calc(var(--sp-3) + var(--safe-b)); display: flex; gap: var(--sp-1); }
 .viewpick .btn { min-width: 40px; min-height: 40px; padding-inline: var(--sp-2); }
@@ -208,7 +218,11 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: var(--sp-2) 0; 
   max-width: 520px; margin-inline: auto; display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); pointer-events: none; }
 .toast { pointer-events: auto; max-width: 100%; background: var(--wood-700); border: 1px solid var(--brass-700); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-4); box-shadow: var(--sh-2);
   display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); line-height: var(--lh-sm); animation: up var(--t-med) var(--ease-out); touch-action: pan-y; will-change: transform; }
-.toast span { overflow-wrap: anywhere; }
+/* Never shrink to one letter per line: a sane minimum width, words break only when they really do not fit. */
+.toast { min-width: min(220px, 100%); width: max-content; }
+.toast > span { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; word-break: normal; }
+.toast.chatpop { flex-direction: column; align-items: stretch; gap: 2px; cursor: pointer; }
+.toast.chatpop b { color: var(--brass-300); font-weight: 700; }
 .toast.error { border-color: var(--ruby-500); }
 .toast .btn { min-height: 40px; padding-inline: var(--sp-3); }
 .banner { position: fixed; inset-inline: 0; top: calc(var(--status-h) + var(--safe-t)); z-index: 9; padding: var(--sp-2) var(--sp-4); background: var(--warn-500); color: var(--ink-900); text-align: center; display: flex; gap: var(--sp-3); justify-content: center; align-items: center; }

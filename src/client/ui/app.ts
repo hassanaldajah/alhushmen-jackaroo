@@ -13,7 +13,7 @@ import { SceneBridge, preloadScene } from './bridge';
 import { Chat } from './chat';
 import { confirmHostChange, confirmLogout, openHelp, openHostMenu, openSettings, openSongs, openVoice } from './sheets';
 import { openHostVote, openResult, openScoreboard } from './results';
-import { anySheetOpen, button, closeAllSheets, spinner, toast, toastAction } from './widgets';
+import { anySheetOpen, button, chatToast, closeAllSheets, spinner, toast, toastAction } from './widgets';
 import { JokeBag, JokeBubble, autoJokesEnabled } from './joke';
 import { jokeAt } from './jokes-ar';
 import './round2.css';
@@ -22,6 +22,8 @@ import './round2.css';
 const QUIET_MS = 90_000;
 /** Joke button cooldown (anti-spam). */
 const JOKE_COOLDOWN_MS = 3_000;
+/** A server "rate" error this soon after own voice signalling is treated as signalling traffic (no toast). */
+const RATE_SIGNAL_WINDOW_MS = 3_000;
 /** The "زوط" gag runs on the 2nd joke-button tap of this device, then again every GAG_EVERY taps. */
 const GAG_EVERY = 7;
 const GAG_MS = [1300, 1000];
@@ -55,6 +57,8 @@ export function startApp(root: HTMLElement, net: Net): void {
   document.body.append(dock.el);
   dock.setMic('listen', false);
   chat.onUnread = (n) => { table?.setUnread(n); dock.setUnread(n); };
+  // Friends' lines pop up as a short bubble (lobby and table), on top of the unread badge.
+  chat.onIncoming = (m) => { if (!gated) chatToast(m.name, m.text, () => chat.show()); };
   // The mic/chat/joke dock exists only inside the game: after login, with a display name.
   const syncDock = () => {
     dock.show(!gated && !!view && view.you.named);
@@ -70,8 +74,8 @@ export function startApp(root: HTMLElement, net: Net): void {
 
   // First user tap unlocks audio (autoplay policy).
   const unlock = () => { sfx.unlock(); };
-  addEventListener('pointerdown', unlock, { once: true });
-  addEventListener('keydown', unlock, { once: true });
+  // Phones: a touch pointerdown is not a user activation; pointerup/touchend/click are.
+  for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) addEventListener(ev, unlock, { once: true });
 
   // ---- quiet-room tracking (silence filler)
   let lastActivity = Date.now();
@@ -91,7 +95,7 @@ export function startApp(root: HTMLElement, net: Net): void {
     if (view) voiceSheet?.refresh(view);
   };
   voice.onBlocked = (b) => { if (b) toast('اضغط على الشاشة لتسمع أصوات اللاعبين'); };
-  addEventListener('pointerdown', () => voice.unlock());
+  for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click']) addEventListener(ev, () => voice.unlock(), { passive: true });
   voice.onSpeaking = (any) => { sfx.duck(any); music?.player.duck(any); if (any) touch(); };
   // Voice may fail on some networks: point people to the chat/fallback once, after a grace period.
   window.setInterval(() => {
@@ -107,7 +111,9 @@ export function startApp(root: HTMLElement, net: Net): void {
   };
 
   function ensureVoice(v: RoomView): void {
-    if (!voiceStarted) { voiceStarted = true; void voice.start(v.you.id).then(() => voice.setRoster(v.voiceIds)); }
+    // A new person id (new session) must not keep signalling with the stale one: restart the mesh.
+    if (voiceStarted && voice.id && voice.id !== v.you.id) { voice.stop(); voiceStarted = false; }
+    if (!voiceStarted) { voiceStarted = true; void voice.start(v.you.id).then(() => voice.setRoster(view?.voiceIds ?? v.voiceIds)); }
     else voice.setRoster(v.voiceIds);
   }
 
@@ -225,6 +231,7 @@ export function startApp(root: HTMLElement, net: Net): void {
     if (k === 'deal') sfx.play('flick');
     else if (k === 'shuffle' || k === 'throw' || k === 'hop' || k === 'capture') sfx.play(k);
     else if (k === 'discard' || k === 'burn') sfx.play('throw');
+    else if (k === 'skip' && e.seat !== undefined && view) toast(T.skipped(view.seats[e.seat]?.name ?? ''));
     bridge?.onEvent(k, e.events ?? []);
   });
   net.on('chat', () => touch());
@@ -232,6 +239,8 @@ export function startApp(root: HTMLElement, net: Net): void {
   net.on('joke', (j) => table?.jokes.show(j.seat, j.index));
   net.on('error', (e) => {
     if (e.code === 'name' || e.code === 'name_taken' || (e.code === 'banned' && view && !view.you.named)) { setNameError(e.code); if (view && !view.you.named) show(view); return; }
+    // 'rate' right after voice signalling is WebRTC traffic, not something the user did: never toast it.
+    if (e.code === 'rate' && Date.now() - voice.lastSignalAt < RATE_SIGNAL_WINDOW_MS) return;
     toast(T.errors[e.code] ?? T.illegal, true);
   });
   const notices: Record<NoticeCode, (n: string, by: string) => string> = {

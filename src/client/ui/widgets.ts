@@ -10,16 +10,34 @@ export function iconButton(ic: string, label: string, onClick: () => void, cls =
 }
 
 let toastRoot: HTMLElement | null = null;
-/** Errors persist until dismissed; others stay 6 s (pausable on hover/focus). */
+/** Toasts stay 6 s, errors 8 s (both pausable on hover/focus; errors also have a close button). */
+export const TOAST_MS = 6000;
+export const ERROR_TOAST_MS = 8000;
+
 export function toast(text: string, error = false): void {
   toastRoot ??= document.body.appendChild(h('div', { class: 'toasts' }));
   const el = h('div', { class: 'toast' + (error ? ' error' : ''), role: error ? 'alert' : 'status' }, h('span', null, text));
   let timer = 0; const rm = () => el.remove();
-  const arm = () => { if (!error) timer = window.setTimeout(rm, 6000); };
+  // Errors stay a bit longer (and keep their close button) but never pile up forever.
+  const arm = () => { clearTimeout(timer); timer = window.setTimeout(rm, error ? ERROR_TOAST_MS : TOAST_MS); };
   el.addEventListener('pointerenter', () => clearTimeout(timer)); el.addEventListener('pointerleave', arm);
   el.addEventListener('focusin', () => clearTimeout(timer)); el.addEventListener('focusout', arm);
   if (error) el.append(iconButton('close', T.close, rm));
   swipeDismiss(el, [el], { axis: () => 'x', sign: () => 0, onDismiss: rm });
+  toastRoot.append(el); arm();
+}
+
+/** Incoming chat line from someone else: sender + text, ~6 s, tap opens the chat. Plain text only. */
+export function chatToast(name: string, text: string, onOpen: () => void): void {
+  toastRoot ??= document.body.appendChild(h('div', { class: 'toasts' }));
+  const el = h('div', { class: 'toast chatpop', role: 'status' }, h('b', null, h('bdi', null, name)), h('span', null, text));
+  let timer = 0; const rm = () => el.remove();
+  const arm = () => { clearTimeout(timer); timer = window.setTimeout(rm, TOAST_MS); };
+  el.addEventListener('click', () => { rm(); onOpen(); });
+  el.addEventListener('pointerenter', () => clearTimeout(timer)); el.addEventListener('pointerleave', arm);
+  swipeDismiss(el, [el], { axis: () => 'x', sign: () => 0, onDismiss: rm });
+  // Keep at most 3 chat bubbles on screen.
+  const old = toastRoot.querySelectorAll('.chatpop'); if (old.length >= 3) old[0]?.remove();
   toastRoot.append(el); arm();
 }
 

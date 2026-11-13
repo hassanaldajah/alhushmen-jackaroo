@@ -17,7 +17,7 @@ import {
   type TeamFinish,
 } from '../shared/protocol';
 import {
-  applyPlay, buildGameView, handCounts, handOf, legalPlays, newGame, seatDone, seatFinished, type GameState,
+  applyPlay, applySkip, buildGameView, handCounts, handOf, legalPlays, newGame, seatDone, seatFinished, type GameState,
 } from '../engine/game';
 import { shuffle, type Rng } from '../engine/rng';
 import { cleanChat, cleanName } from './validate';
@@ -26,7 +26,7 @@ import { cleanChat, cleanName } from './validate';
 export const IDLE_RESET_MS = 10 * 60_000;
 export const SEAT_HOLD_MS = 5 * 60_000; // a player may leave the browser up to 5 min and keep the seat
 export const MSG_PER_10S = 120;
-export const SIGNAL_PER_10S = 200;
+export const SIGNAL_PER_10S = 600;
 /** Malformed frames tolerated per 10 s before the socket is closed. */
 export const BAD_PER_10S = 20;
 /** After a kick, the display name stays banned this long (M4). Not by IP: friends may share one Wi-Fi. */
@@ -848,6 +848,18 @@ export class RoomCore {
         if (g.over) out.push(...this.endGame(now));
         else if (g.dealNo !== dealBefore) out.push(...this.joke(g));
         return this.changed(now, out);
+      }
+
+      case 'skip': {
+        // Only the very first turn of a game, once (owner rule). Paused/ended games ignore it.
+        const g = s.game;
+        if (s.phase !== 'playing' || !g || g.over) return [];
+        if (seat === null) return this.err(key, 'not_player');
+        if (this.paused()) return [];
+        if (g.turn !== seat) return this.err(key, 'not_turn');
+        const res = applySkip(g, seat, this.deps.rng);
+        if (!res.ok) return this.err(key, res.code === 'not_turn' ? 'not_turn' : res.code === 'ended' ? 'not_allowed' : 'no_skip');
+        return this.changed(now, [this.broadcast({ t: 'event', kind: 'skip', seat, events: res.events })].flat());
       }
 
       case 'hint': {

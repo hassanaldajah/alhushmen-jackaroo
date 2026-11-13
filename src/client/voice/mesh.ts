@@ -4,6 +4,11 @@ export type MicState = 'muted' | 'live' | 'connecting' | 'denied' | 'unavailable
 export type PeerStatus = 'connecting' | 'connected' | 'failed';
 export interface PeerInfo { id: string; status: PeerStatus; speaking: boolean; remoteMuted: boolean; failed: boolean; quality: 'good' | 'fair' | 'poor'; volume: number; localMuted: boolean }
 
+/** ICE servers (TURN credentials live 1 h) are refetched when older than this. */
+export const ICE_MAX_AGE_MS = 30 * 60_000;
+/** Automatic ICE restarts after 'failed' before the user's retry button is the only way. */
+const AUTO_RETRIES = 2;
+
 interface Link { pc: RTCPeerConnection; audio: HTMLAudioElement; polite: boolean; analyser?: AnalyserNode; failed: boolean; makingOffer: boolean; ignoreOffer: boolean }
 
 /** Audio-only full mesh. Signalling goes through the room socket (net.send({t:'signal'})). */
@@ -29,8 +34,28 @@ export class VoiceMesh {
   async start(selfId: string): Promise<void> {
     this.selfId = selfId;
     this.ice = await this.net.iceServers();
+    this.iceAt = Date.now();
     this.poll = window.setInterval(() => this.sample(), 100);
   }
+  /** Id this mesh was started with ('' when stopped). */
+  get id(): string { return this.selfId; }
+
+  /** TURN credentials expire after 1 h: fetch fresh ICE servers when the cached ones are older than 30 min. */
+  private iceAt = 0;
+  private iceJob: Promise<void> | null = null;
+  refreshIce(now = Date.now()): Promise<void> {
+    if (now - this.iceAt < ICE_MAX_AGE_MS) return Promise.resolve();
+    this.iceJob ??= this.net.iceServers().then((ice) => {
+      this.ice = ice; this.iceAt = Date.now();
+      for (const l of this.links.values()) { try { l.pc.setConfiguration({ ...l.pc.getConfiguration(), iceServers: ice }); } catch { /* closed */ } }
+    }).catch(() => { /* keep the old list */ }).finally(() => { this.iceJob = null; });
+    return this.iceJob;
+  }
+
+  /** Last time this mesh sent signalling (server 'rate' errors right after are voice traffic, not the user). */
+  lastSignalAt = 0;
+  /** Automatic ICE restarts per peer since its last good connection. */
+  private autoRetries = new Map<string, number>();
 
   /** Reconcile links with the people currently in the room. */
   setRoster(ids: string[]): void {
@@ -50,11 +75,20 @@ export class VoiceMesh {
     } catch { this.micState = 'denied'; this.onChange(); return; }
     this.track = this.stream.getAudioTracks()[0] ?? null;
     if (!this.track) { this.micState = 'unavailable'; this.onChange(); return; }
-    this.ensureCtx();
-    this.selfAnalyser = this.ctx!.createAnalyser(); this.selfAnalyser.fftSize = 512;
-    this.ctx!.createMediaStreamSource(this.stream).connect(this.selfAnalyser);
-    for (const l of this.links.values()) await l.pc.getSenders().find((s) => s.track === null || s.track.kind === 'audio')?.replaceTrack(this.track);
+    try {
+      this.ensureCtx();
+      this.selfAnalyser = this.ctx!.createAnalyser(); this.selfAnalyser.fftSize = 512;
+      this.ctx!.createMediaStreamSource(this.stream).connect(this.selfAnalyser);
+    } catch { this.selfAnalyser = null; /* level meter only; the mic still works */ }
+    // A throw here must never leave the mic stuck on 'connecting'.
+    for (const l of this.links.values()) await this.attach(l.pc);
     this.setMuted(false);
+  }
+
+  /** Put the own mic track on the link's audio transceiver (if it has one yet). Never throws. */
+  private async attach(pc: RTCPeerConnection): Promise<void> {
+    if (!this.track) return;
+    try { await pc.getTransceivers()[0]?.sender.replaceTrack(this.track); } catch { /* link closing or not ready: ontrack retries */ }
   }
 
   setMuted(m: boolean): void {
@@ -72,7 +106,10 @@ export class VoiceMesh {
     const l = this.links.get(id); const p = this.peers.get(id);
     if (!l || !p) { this.open(id); this.onChange(); return; }
     p.status = 'connecting'; p.failed = false; l.failed = false;
-    try { l.pc.restartIce(); } catch { this.close(id); this.open(id); }
+    void this.refreshIce().then(() => {
+      if (this.links.get(id) !== l) return;
+      try { l.pc.restartIce(); } catch { this.close(id); this.open(id); this.onChange(); }
+    });
     window.setTimeout(() => {
       const q = this.peers.get(id);
       if (q && q.status !== 'connected' && this.links.get(id) === l) { this.close(id); this.open(id); this.onChange(); }
@@ -98,14 +135,19 @@ export class VoiceMesh {
   private ensureCtx(): void { this.ctx ??= new AudioContext(); void this.ctx.resume(); }
 
   private open(id: string): void {
+    void this.refreshIce(); // stale TURN credentials: new list is applied to this link too when it arrives
     const pc = new RTCPeerConnection({ iceServers: this.ice });
     const audio = new Audio(); audio.autoplay = true; audio.setAttribute('playsinline', '');
     audio.style.display = 'none'; document.body.append(audio); // iOS plays remote streams more reliably when attached
     const link: Link = { pc, audio, polite: this.selfId > id, failed: false, makingOffer: false, ignoreOffer: false };
     this.links.set(id, link);
     this.peers.set(id, { id, status: 'connecting', speaking: false, remoteMuted: false, failed: false, quality: 'good', volume: 100, localMuted: false });
-    const tr = pc.addTransceiver('audio', { direction: 'sendrecv' });
-    if (this.track) void tr.sender.replaceTrack(this.track);
+    // Only the impolite side creates the audio transceiver (and so sends the first offer); both sides adding
+    // one caused offer glare. The polite side gets its transceiver from that offer (see ontrack).
+    if (!link.polite) {
+      const tr = pc.addTransceiver('audio', { direction: 'sendrecv' });
+      if (this.track) void tr.sender.replaceTrack(this.track).catch(() => {});
+    }
     // Opus + DTX
     pc.onicecandidate = (e) => { if (e.candidate) this.sig(id, { c: e.candidate.toJSON() }); };
     pc.onnegotiationneeded = async () => {
@@ -113,6 +155,10 @@ export class VoiceMesh {
       catch { /* retried via button */ } finally { link.makingOffer = false; }
     };
     pc.ontrack = (e) => {
+      if (link.polite && e.transceiver) {
+        try { e.transceiver.direction = 'sendrecv'; } catch { /* closed */ }
+        if (this.track) void e.transceiver.sender.replaceTrack(this.track).catch(() => {});
+      }
       audio.srcObject = e.streams[0] ?? new MediaStream([e.track]);
       this.playAudio(audio);
       this.ensureCtx();
@@ -126,6 +172,12 @@ export class VoiceMesh {
       p.failed = link.failed;
       p.status = pc.connectionState === 'connected' ? 'connected' : link.failed ? 'failed' : 'connecting';
       p.quality = pc.connectionState === 'connected' ? 'good' : pc.connectionState === 'failed' ? 'poor' : 'fair';
+      if (pc.connectionState === 'connected') this.autoRetries.delete(id);
+      // Failed: restart ICE automatically (retry() rebuilds the link if that does not recover). Bounded.
+      if (link.failed) {
+        const n = this.autoRetries.get(id) ?? 0;
+        if (n < AUTO_RETRIES) { this.autoRetries.set(id, n + 1); this.retry(id); return; }
+      }
       this.onChange();
     };
   }
@@ -136,7 +188,7 @@ export class VoiceMesh {
     this.links.delete(id); this.peers.delete(id);
   }
 
-  private sig(to: string, data: Signal): void { this.net.send({ t: 'signal', to, data }); }
+  private sig(to: string, data: Signal): void { this.lastSignalAt = Date.now(); this.net.send({ t: 'signal', to, data }); }
 
   private async onSignal(from: string, s: Signal): Promise<void> {
     if (!s || typeof s !== 'object') return;
@@ -183,7 +235,7 @@ export class VoiceMesh {
     for (const id of [...this.links.keys()]) this.close(id);
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null; this.track = null; this.selfAnalyser = null;
-    this.peers.clear();
+    this.peers.clear(); this.autoRetries.clear();
     this.selfId = ''; this.selfSpeaking = false; this.micState = 'listen';
     this.onSpeaking(false);
     this.onChange();

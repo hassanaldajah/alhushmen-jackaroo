@@ -10,6 +10,8 @@ import type { MicState } from '../voice/mesh';
 import { sfx } from '../audio/sfx';
 
 const SUIT: Record<string, string> = { S: '♠', H: '♥', D: '♦', C: '♣' };
+const cardName = (c: Card): string =>
+  (c.rank === 'J' ? T.rankJ : c.rank === 'Q' ? T.rankQ : c.rank === 'K' ? T.rankK : c.rank === 'A' ? T.rankA : c.rank) + (SUIT[c.suit] ?? '');
 
 export interface TableActions { help(): void; voice(): void; menu(): void; micToggle(): void; songs(): void; chat(): void; joke(): void }
 
@@ -21,6 +23,8 @@ export class Table {
   private sceneEl = h('div', { id: 'scene', role: 'img', 'aria-label': T.room });
   private mic = h('button', { type: 'button', class: 'mic muted', 'aria-pressed': 'false', 'aria-label': T.micOff });
   private hintBtn: HTMLButtonElement;
+  /** First turn of the game only (server canSkip): pass the turn without throwing a card. */
+  private skipBtn: HTMLButtonElement;
   private camBtn: HTMLButtonElement;
   private tip = h('div', { class: 'cardtip', hidden: true, role: 'status', 'aria-live': 'polite' });
   private npcTag = h('div', { class: 'npc-tag', hidden: true, 'aria-hidden': 'true' }, h('b', null, T.npcName), h('span', null, T.npcBadge));
@@ -53,6 +57,10 @@ export class Table {
   constructor(private net: Net, private scene: SceneHost | null, private hints: HintSource | null, private act: TableActions) {
     this.mic.addEventListener('click', () => { navigator.vibrate?.(10); act.micToggle(); });
     this.hintBtn = button(T.hint, 'btn-secondary hint-btn', () => this.hint(true));
+    this.skipBtn = button(T.skipTurn, 'btn-secondary skip-btn', () => this.skip());
+    this.skipBtn.title = T.skipHint;
+    this.skipBtn.setAttribute('aria-description', T.skipHint);
+    this.skipBtn.hidden = true;
     this.camBtn = iconButton('camera', T.resetCam, () => this.scene?.resetCamera(), 'rail-btn cam-btn');
     this.camBtn.hidden = true;
     const speaker = iconButton('speaker', T.music, act.songs, 'rail-btn');
@@ -60,7 +68,7 @@ export class Table {
     const voiceBtn = iconButton('voice', T.voiceTitle, act.voice, 'rail-btn');
     const rail = h('div', { class: 'rail' }, speaker, voiceBtn, helpChip, this.camBtn);
     const actions = h('div', { class: 'actions' }, this.hintBtn, button(T.jokeAyman, 'btn-secondary joke-bottom', () => act.joke(), 'joke'));
-    this.el = h('div', { class: 'table' }, this.sceneEl, this.status, this.finEl, rail, actions, this.promptEl, this.confirmEl, this.tip, this.npcTag,
+    this.el = h('div', { class: 'table' }, this.sceneEl, this.status, this.finEl, rail, actions, this.skipBtn, this.promptEl, this.confirmEl, this.tip, this.npcTag,
       h('div', { class: 'handbar' }, this.hand));
     this.jokes = new JokeBubble(this.sceneEl, (seat) => this.scene?.seatAnchor(seat) ?? null);
     this.clockTimer = window.setInterval(() => this.tickClock(), 1000);
@@ -80,8 +88,19 @@ export class Table {
 
   private renderPrompt(): void {
     const t = this.prompt;
-    this.promptEl.hidden = !t || (!!this.pending && !this.pending.alt);
+    // While the throw bar is up, the step prompt lives inside it (one place, nothing floating over the board).
+    this.promptEl.hidden = !t || !this.confirmEl.hidden;
     clear(this.promptEl, t ? h('span', null, t) : null);
+    if (!this.confirmEl.hidden && !(this.pending && !this.pending.alt)) {
+      const i = this.confirmEl.querySelector('.info');
+      if (i) i.textContent = this.barInfo();
+    }
+  }
+
+  /** Card name + what to do next, for the throw bar while no move is chosen yet. */
+  private barInfo(): string {
+    const c = this.selected ? this.v?.hand.find((x) => x.id === this.selected) : undefined;
+    return [c ? cardName(c) : '', this.prompt ?? T.throwWait].filter(Boolean).join(' - ');
   }
 
   private setPending(p: PendingMove | null): void {
@@ -89,27 +108,58 @@ export class Table {
     this.renderConfirm();
   }
 
+  /**
+   * Throw bar: shown from the moment a card is selected on your turn, fixed at the bottom. "ارمِ" is always
+   * visible there and becomes active once a move is chosen. Cancel drops the card (full hand back).
+   */
   private renderConfirm(): void {
     const p = this.pending;
-    this.confirmEl.hidden = !p;
-    this.el.classList.toggle('confirming', !!p);
-    this.renderPrompt();
-    if (!p) { clear(this.confirmEl); return; }
+    const myTurn = !!this.v && this.v.you.seat !== null && this.v.turnSeat === this.v.you.seat;
+    const show = !!p || (!!this.selected && myTurn);
+    this.confirmEl.hidden = !show;
+    this.el.classList.toggle('confirming', show);
+    if (!show) { clear(this.confirmEl); this.renderPrompt(); this.syncStrip(); return; }
+    const cardId = p?.cardId ?? this.selected!;
     const go = (o: { moves: PendingMove['options'][number]['moves'] }) => { // only a user tap sends anything
-      this.net.send({ t: 'play', cardId: p.cardId, moves: o.moves });
+      this.net.send({ t: 'play', cardId, moves: o.moves });
       sfx.play('throw');
       this.reset();
     };
-    if (p.alt) {
-      // Side options while the player is still choosing a marble (e.g. burn with a 10).
-      clear(this.confirmEl, h('span', { class: 'info' }, T.orAlso), ...p.options.map((o) => button(o.summary, 'btn-secondary', () => go(o))));
-      return;
+    const ready = p && !p.alt ? p : null;
+    const multi = !!ready && ready.options.length > 1;
+    let main: HTMLElement[];
+    if (ready && multi) main = ready.options.map((o) => button(`${T.throwIt}: ${o.summary}`, 'btn-primary throw-btn', () => go(o)));
+    else {
+      const t = button(T.throwIt, 'btn-primary throw-btn', () => { if (ready) go(ready.options[0]!); });
+      if (!ready) { t.disabled = true; t.setAttribute('aria-disabled', 'true'); }
+      main = [t];
     }
-    const multi = p.options.length > 1;
-    clear(this.confirmEl,
-      multi ? h('span', { class: 'info' }, T.pickOption) : h('span', { class: 'info' }, p.options[0]?.summary ?? ''),
-      ...(multi ? p.options.map((o) => button(o.summary, 'btn-primary', () => go(o))) : [button(T.confirm, 'btn-primary', () => go(p.options[0]!), 'check')]),
-      button(T.cancel, 'btn-secondary', () => { this.scene?.cancelPending(); if (!this.scene) { this.pending = null; this.renderConfirm(); } }));
+    // Side options while the player is still choosing a marble (e.g. burn with a 10).
+    const alt = p?.alt ? [h('span', { class: 'alt' }, T.orAlso, ...p.options.map((o) => button(o.summary, 'btn-secondary', () => go(o))))] : [];
+    const info = ready ? (multi ? T.pickOption : ready.options[0]?.summary ?? '') : this.barInfo();
+    clear(this.confirmEl, h('span', { class: 'info' }, info), ...alt, ...main, button(T.cancel, 'btn-secondary', () => this.reset()));
+    this.renderPrompt();
+    this.syncStrip();
+  }
+
+  /** Phone 3D hand: thin strip just above the throw bar while a card is selected, normal fan otherwise. */
+  private syncStrip(): void {
+    if (!this.scene) return;
+    if (this.confirmEl.hidden || !this.selected) { this.scene.setHandStrip(null); return; }
+    requestAnimationFrame(() => {
+      if (this.confirmEl.hidden || !this.selected) return;
+      const sc = this.sceneEl.getBoundingClientRect(), cb = this.confirmEl.getBoundingClientRect();
+      if (!sc.height || !cb.height) return;
+      this.scene?.setHandStrip({ bottom: Math.max(0, sc.bottom - cb.top + 8), left: Math.max(8, cb.left - sc.left), right: Math.max(8, sc.right - cb.right) });
+    });
+  }
+
+  /** First-turn skip (the server decides; the button only shows while the view says canSkip). */
+  private skip(): void {
+    if (!this.v?.game?.canSkip) return;
+    this.skipBtn.hidden = true;
+    this.reset();
+    this.net.send({ t: 'skip' });
   }
 
   private reset(): void {
@@ -178,6 +228,7 @@ export class Table {
     if (!myTurn && this.selected) this.reset();
     if (this.selected && !v.hand.some((c) => c.id === this.selected)) this.reset();
     this.hintBtn.hidden = !myTurn;
+    this.skipBtn.hidden = !(myTurn && v.phase === 'playing' && !!v.game?.canSkip && !v.game.paused);
     this.renderViewPick();
     this.renderHand();
     this.renderTip();
@@ -213,25 +264,29 @@ export class Table {
       this.renderTip();
       return;
     }
-    // A second tap on the same card (scene peek) keeps it selected; the confirm bar decides.
+    // A second tap on the same card in the 3D scene keeps the selection AND the chosen marble/destination
+    // (re-selecting it used to restart the flow, so the throw button never came up).
+    if (fromScene && this.selected === c.id) return;
     this.preview = null;
     this.selected = this.selected === c.id && !fromScene ? null : c.id;
     sfx.play('flick');
+    this.pending = null;
+    if (!this.selected) this.prompt = null;
     this.scene?.selectCard(this.selected ? c : null);
-    if (!this.selected) { this.pending = null; this.prompt = null; this.renderConfirm(); }
+    this.renderConfirm();
     this.renderHand();
     this.renderTip();
   }
 
   /** One-line card explanation above the selected card (3D hand or 2D fallback hand); never blocks taps. */
   private renderTip(): void {
-    const id = this.selected ?? this.preview;
+    // On the 3D table a selected card is explained inside the throw bar, so nothing floats over the marbles.
+    const id = this.selected && this.scene?.active ? this.preview : this.selected ?? this.preview;
     const c = id ? this.v?.hand.find((x) => x.id === id) : undefined;
     this.tip.hidden = !c;
     this.tipFor = c?.id ?? null;
     if (!c) { clear(this.tip); return; }
-    const label = c.rank === 'J' ? T.rankJ : c.rank === 'Q' ? T.rankQ : c.rank === 'K' ? T.rankK : c.rank === 'A' ? T.rankA : c.rank;
-    clear(this.tip, h('b', null, h('bdi', null, label + (SUIT[c.suit] ?? ''))), ' ', T.cardTip(c.rank));
+    clear(this.tip, h('b', null, h('bdi', null, cardName(c))), ' ', T.cardTip(c.rank));
     this.follow();
   }
 

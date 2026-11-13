@@ -3,13 +3,13 @@ import {
   DirectionalLight, DoubleSide, ExtrudeGeometry, FogExp2, Float32BufferAttribute, HemisphereLight, InstancedMesh, Material, Mesh,
   MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, Object3D, PCFSoftShadowMap, PerspectiveCamera, Path, Plane,
   PlaneGeometry, Points, PointsMaterial, Raycaster, RingGeometry, Scene, Shape, ShapeGeometry, SphereGeometry, SpotLight, Texture,
-  Vector2, Vector3, WebGLRenderer,
+  Euler, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { C, CSS, SEAT_COLORS } from './colors';
 import { Tweens, easeInOut, easeOut, linear } from './tween';
 import {
   BASE_DX, BASE_Z, BOARD_HALF, BOARD_Y, CARD_H, CARD_W, CELL, FRAME_HALF, MARBLE_R, NPC_POS, PER, TABLE_CARD_SCALE, TRACK, ZOOM_SCALE,
-  allCells, cardJitter, deckPose, framePoints, handAnchors, handPose, localHome, posToXZ, rot, samePos, screenPos, tablePose, trackXZ, zoomPose,
+  allCells, cardJitter, choosePick, deckPose, framePoints, handAnchors, handPose, localHome, posToXZ, rot, samePos, screenPos, tablePose, trackXZ, zoomPose,
 } from './layout';
 import type { HandMode, Pose } from './layout';
 import { BACK_INDEX, atlasUV, buildAtlas, faceIndex, outlineTexture } from './textures';
@@ -76,6 +76,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   let degrade = 0;
   let sel: { cardId: string | null; marbleId: number | null } = { cardId: null, marbleId: null };
   let peekId: string | null = null, hoverId: string | null = null;
+  /** Phone: while a card is selected the own hand shrinks to a thin strip in a screen box (canvas px) so the board stays free. */
+  let strip: { bottom: number; left: number; right: number } | null = null;
   let hints: Hints | null = null;
   let targets: Targets | null = null;
   let lastView: SceneView | null = null;
@@ -102,6 +104,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     lastFrame = now;
     const active = tweens.step(now);
     const camMoving = stepCamera(dt);
+    if (camMoving && stripOn()) relayoutHand(viewSeat, 0); // the strip is screen-anchored: follow the camera
     const cont = continuous();
     const minGap = quality === 'low' ? 30 : !active && !camMoving && !dragging() && cont ? 32 : 0;
     if (minGap && now - lastRender < minGap) { raf = requestAnimationFrame(frame); return; }
@@ -444,8 +447,33 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   const k = (seat: number) => screenPos(seat, viewSeat);
   const isOwn = (seat: number) => !spectator && seat === viewSeat;
 
+  const stripOn = () => !!strip && mode.phone && !spectator && !!sel.cardId;
+  const camEuler = new Euler(0, 0, 0, 'YXZ');
+  /**
+   * Own card in the bottom strip: placed on the camera ray through a screen point, facing the camera, sized in px.
+   * Non-selected cards are small; the selected one is a bit taller and outlined, all on one bottom-aligned row.
+   */
+  function stripPose(i: number, n: number, selected: boolean): { p: Pose; sc: number } {
+    const st = strip!;
+    const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
+    const small = clamp(h * 0.06, 38, 52), big = small * 1.3;
+    const hp = selected ? big : small;
+    const cw = small * (CARD_W / CARD_H);
+    const avail = Math.max(cw, w - st.left - st.right);
+    const sp = Math.min(cw * 1.08, (avail - cw) / Math.max(1, n - 1));
+    const cx = st.left + avail / 2 + (i - (n - 1) / 2) * sp;
+    const cy = h - st.bottom - hp / 2; // one bottom-aligned row: the selected card is just taller (and outlined)
+    const dist = 3.2;
+    v3.set((cx / w) * 2 - 1, 1 - (cy / h) * 2, 0.5).unproject(camera).sub(camera.position).normalize();
+    const pos = camera.position.clone().addScaledVector(v3, dist);
+    const worldH = (hp / h) * 2 * dist * Math.tan(rad(camera.fov / 2));
+    camEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+    return { p: { x: pos.x, y: pos.y, z: pos.z, rx: camEuler.x, ry: camEuler.y, rz: camEuler.z + (selected ? 0 : (i - (n - 1) / 2) * -0.04) }, sc: worldH / CARD_H };
+  }
+
   /** Pose + scale for a hand card; own selected/previewed card is lifted and enlarged, hovered card is lifted. */
   function slotPose(seat: number, i: number, n: number): { p: Pose; sc: number } {
+    if (isOwn(seat) && stripOn()) return stripPose(i, n, (hands[seat] as CardObj[])[i]?.id === sel.cardId);
     const p = handPose(k(seat), i, n, isOwn(seat), mode);
     const c = (hands[seat] as CardObj[])[i];
     if (c && isOwn(seat)) {
@@ -873,11 +901,15 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     const dbl = lastTap.empty && now - lastTap.t < 320 && Math.hypot(px - lastTap.x, py - lastTap.y) < 36;
     lastTap = { t: now, x: px, y: py, empty: false };
     if (interactive) {
-      const card = nearestOwnCard(px, py, rect, 34);
-      if (card) { peekId = card.id; relayoutHand(viewSeat, 160); ev.onPickCard?.(card.id); return; }
+      // Board targets (marbles / destinations) win over the own cards: the enlarged selected card used to sit on
+      // top of the own base, so a tap on a base marble re-selected the card and the throw step was never reached.
       const t = nearestTarget(px, py, rect, 32);
-      if (t?.cell) { ev.onPickCell?.(t.cell); return; }
-      if (t?.marble !== undefined) { ev.onPickMarble?.(t.marble); return; }
+      const card = nearestOwnCard(px, py, rect, 34);
+      const near = card ? nearestOwnCard(px, py, rect, 14) === card : false;
+      const what = choosePick(t, card ? { id: card.id, near } : null, sel.cardId);
+      if (what === 'target' && t?.cell) { ev.onPickCell?.(t.cell); return; }
+      if (what === 'target' && t?.marble !== undefined) { ev.onPickMarble?.(t.marble); return; }
+      if (what === 'card' && card) { if (card.id !== sel.cardId) { peekId = card.id; relayoutHand(viewSeat, 160); } ev.onPickCard?.(card.id); return; }
     }
     // Empty space: a double tap brings the camera back behind the own seat.
     if (dbl) { resetCamera(true); lastTap.empty = false; return; }
@@ -1057,9 +1089,16 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     applyView, playDeal, playMove, playThrow,
     skipAnimations() { tweens.finishAll(); dealing = false; request(true); },
     setSelection(s) {
+      const before = sel.cardId;
       sel = { cardId: s.cardId ?? null, marbleId: s.marbleId ?? null };
       peekId = sel.cardId;
+      if (before !== sel.cardId && strip && mode.phone) relayoutHand(viewSeat, 220);
       refreshOverlays();
+    },
+    setHandStrip(b) {
+      const was = stripOn();
+      strip = b ? { bottom: Math.max(0, b.bottom), left: Math.max(0, b.left ?? 0), right: Math.max(0, b.right ?? 0) } : null;
+      if (was || stripOn()) relayoutHand(viewSeat, 220);
     },
     setHints(h) { hints = h; refreshOverlays(); },
     setTargets(t) {
@@ -1086,6 +1125,14 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       if (!a) return null;
       a.root.updateMatrixWorld(true);
       return project(tmp.copy(a.head).applyMatrix4(a.root.matrixWorld));
+    },
+    marbleAnchor(id) {
+      if (!(id >= 0 && id < 16)) return null;
+      return project(tmp.set(mx[id] as number, my[id] as number, mz[id] as number));
+    },
+    cellAnchor(pos) {
+      const [x, z] = posToXZ(pos, viewSeat);
+      return project(tmp.set(x, BOARD_Y, z));
     },
     cardAnchor(id) {
       if (spectator) return null;

@@ -7,7 +7,8 @@ export const T = {
   full: 'الغرفة كاملة', nobody: 'ما حدا قاعد. اختر كرسي', noSpec: 'ما في متفرجين', spectators: 'المتفرجين',
   teamA: 'فريق أ', teamB: 'فريق ب', disconnected: 'غير متصل', you: 'انت', save: 'احفظ', leave: 'رجوع للّوبي',
   turnYou: 'دورك', turnOther: (n: string) => `دور ${n}`, waitingFor: (n: string) => `بانتظار ${n} يرجع (اللعبة موقّفة)`, seatOpenWait: 'في مقعد فاضي، اللعبة موقّفة', waitingDeal: 'بانتظار التوزيع',
-  confirm: 'تأكيد', cancel: 'إلغاء', hint: 'وريني الحركات', spectatorLabel: 'متفرج',
+  chatLabel: 'دردشة', confirm: 'تأكيد', cancel: 'إلغاء', throwIt: 'ارمِ', throwWait: 'اختار حجر ومكان، بعدين ارمِ',
+  skipTurn: 'مرّر دوري', skipHint: 'بس بأول دور باللعبة: بتمرّر الدور للي بعدك وما بتخسر ولا ورقة', skipped: (n: string) => `${n} مرّر دوره`, hint: 'وريني الحركات', spectatorLabel: 'متفرج',
   cardsCount: (n: number) => `${n} ورقة`, dealt: (n: number) => `وزّعنا الورق. عندك ${n} ورقة`,
   illegal: 'هاي الحركة مش مسموحة', notTurn: 'مش دورك', pickCard: 'اختر ورقة',
   retrying: 'عم نعيد الاتصال...', lost: 'انقطع الاتصال', retry: 'جرّب مرة ثانية', roomFull: 'الغرفة كاملة',
@@ -64,7 +65,7 @@ export const T = {
   errors: { banned: 'انطردت من الغرفة. بتقدر تتفرج بس، وجرّب تلعب بعد شوي', rate: 'شوي شوي، استنى لحظة', not_host: 'هاي للمضيف بس', seat_taken: 'الكرسي انحجز', full: 'الغرفة كاملة', not_lobby: 'مش وقتها، اللعبة شغّالة', host_taken: 'سبقك حدا ع المضيف',
     vote_open: 'في تصويت شغّال', vote_cooldown: 'استنى شوي قبل تصويت جديد', teams_incomplete: 'لازم فريقين كاملين', not_seated: 'لازم تكون قاعد', has_partner: 'عنده شريك',
     no_request: 'الطلب خلص', name_taken: 'في حدا بنفس الاسم', name: 'الاسم مش مقبول، جرّب غيره', not_named: 'اكتب اسمك أول', queue_full: 'الدور ممتلي', paused: 'اللعبة موقّفة',
-    chat: 'الرسالة ما انرسلت', illegal: 'هاي الحركة مش مسموحة', not_turn: 'مش دورك' } as Record<string, string>,
+    chat: 'الرسالة ما انرسلت', illegal: 'هاي الحركة مش مسموحة', not_turn: 'مش دورك', no_skip: 'التمرير بس بأول دور باللعبة، ومرة وحدة' } as Record<string, string>,
   chat: 'الدردشة', chatPh: 'اكتب رسالة', chatSend: 'ارسل', chatMute: 'اكتمه', chatUnmute: 'ألغِ الكتم', chatEmpty: 'ما في رسائل', chatMuted: 'مكتوم',
   suit: { S: 'بستوني', H: 'قلب', D: 'ديناري', C: 'سباتي' } as Record<string, string>,
 };

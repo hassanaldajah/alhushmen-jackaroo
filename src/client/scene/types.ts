@@ -106,6 +106,11 @@ export interface SceneApi {
   setHints(h: Hints | null): void;
   /** Interactive marbles / destinations for the current step (null = nothing on the board is interactive). */
   setTargets(t: Targets | null): void;
+  /**
+   * Phone: while a card is selected, shrink the own hand to a thin strip whose bottom edge sits `bottom` canvas px
+   * above the canvas bottom (between `left` and `right` insets). null = normal hand.
+   */
+  setHandStrip(b: { bottom: number; left?: number; right?: number } | null): void;
   /** CSS px covered by HUD/hand bar; the board is framed in the free area. */
   setInsets(i: { top?: number; bottom?: number }): void;
   /** Spectators only: which seat's side is at the bottom (0..3). Ignored for players. Default 0 (neutral). */
@@ -117,6 +122,10 @@ export interface SceneApi {
   seatAnchor(seat: number): ScreenPoint | null;
   /** Top centre of an own card on screen (tooltip anchor) and its on-screen width; null if hidden/off-screen. */
   cardAnchor(cardId: string): (ScreenPoint & { w: number }) | null;
+  /** Centre of a marble on screen (CSS px relative to the canvas); null if off-screen. */
+  marbleAnchor(marbleId: number): ScreenPoint | null;
+  /** Centre of a board cell on screen (CSS px relative to the canvas); null if off-screen. */
+  cellAnchor(pos: MarblePos): ScreenPoint | null;
   /** Pirate NPC: point above his head, and his chest badge (centre + on-screen width). */
   npcAnchor(): { head: ScreenPoint | null; badge: (ScreenPoint & { w: number }) | null };
   /** Pirate pulls the folded paper out of his pocket; resolves when he is ready to read. */

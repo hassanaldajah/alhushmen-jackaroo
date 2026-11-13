@@ -15,13 +15,15 @@ export class Chat {
   private open: { draw(): void } | null = null;
   unread = 0;
   onUnread: (n: number) => void = () => {};
+  /** A new line from someone else (not muted) while the chat sheet is closed: show it as a short bubble. */
+  onIncoming: (m: ChatMsg) => void = () => {};
 
   constructor(private net: Net, private selfId: () => string) {
     net.on('chatHistory', (m) => { this.msgs = m.msgs.slice(-100); this.open?.draw(); });
     net.on('chat', (m) => {
       this.msgs.push(m.msg); if (this.msgs.length > 100) this.msgs.shift();
       if (this.open) this.open.draw();
-      else if (m.msg.from !== this.selfId() && !this.muted.has(m.msg.from)) { this.unread++; this.onUnread(this.unread); }
+      else if (m.msg.from !== this.selfId() && !this.muted.has(m.msg.from)) { this.unread++; this.onUnread(this.unread); this.onIncoming(m.msg); }
     });
   }
 

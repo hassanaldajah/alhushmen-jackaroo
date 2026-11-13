@@ -125,6 +125,16 @@ export function zoomPose(k: number, mode: HandMode, x: number): Pose {
 }
 export const ZOOM_SCALE = 2.2;
 
+/**
+ * Tap arbitration between a board target (marble/destination of the current step) and an own hand card.
+ * Board targets win: the enlarged selected card used to lie over the own base, so a tap on a base marble
+ * re-selected the card and the throw step was never reached. Another card wins only on a close hit.
+ */
+export function choosePick(target: unknown | null, card: { id: string; near: boolean } | null, selectedId: string | null): 'target' | 'card' | null {
+  if (target && !(card && card.near && card.id !== selectedId)) return 'target';
+  return card ? 'card' : null;
+}
+
 /** Hand targets for the avatar arms in the seat-local frame (z toward the table centre is negative). */
 export function handAnchors(own: boolean, mode: HandMode, n: number): { l: [number, number, number]; r: [number, number, number] } {
   if (own && !mode.phone) return { l: [-1.8, 0.25, 8.5], r: [1.8, 0.25, 8.5] };

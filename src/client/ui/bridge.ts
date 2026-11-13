@@ -25,6 +25,8 @@ export interface SceneHost {
   /** Legal-move highlight, shown on request only; must never select anything. */
   showHints(on: boolean): void;
   cancelPending(): void;
+  /** Phone: thin own-hand strip while a card is selected (bottom edge in canvas px from the bottom); null = normal hand. */
+  setHandStrip(b: { bottom: number; left?: number; right?: number } | null): void;
   onPending(cb: (p: PendingMove | null) => void): void;
   /** Short Arabic prompt for the next step ("اختر حجرك"), null when none. */
   onPrompt(cb: (s: string | null) => void): void;
@@ -203,6 +205,8 @@ export class SceneBridge implements SceneHost, HintSource {
           },
         });
         wait.remove();
+        // Dev-only hook for the headless layout checks (stripped from production builds).
+        if (import.meta.env.DEV) (window as unknown as { __jk?: unknown }).__jk = { scene: this.scene, bridge: this };
         if (!this.scene) { canvas.remove(); container.append(this.fallback()); this.failed = true; this.fallbackCb(); return; }
         this.ro = new ResizeObserver(() => this.scene?.resize());
         this.ro.observe(container);
@@ -231,6 +235,7 @@ export class SceneBridge implements SceneHost, HintSource {
   npcRead(): Promise<void> { return this.scene?.npcRead() ?? Promise.resolve(); }
   npcDone(): void { this.scene?.npcDone(); }
   resetCamera(): void { this.scene?.resetCamera(true); }
+  setHandStrip(b: { bottom: number; left?: number; right?: number } | null): void { this.scene?.setHandStrip(b); }
   onPending(cb: (p: PendingMove | null) => void): void { this.pendingCb = cb; }
   onPrompt(cb: (s: string | null) => void): void { this.promptCb = cb; }
   onCardPick(cb: (cardId: string) => void): void { this.cardCb = cb; }

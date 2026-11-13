@@ -10,7 +10,7 @@ export function createDock(onMic: () => void, onChat: () => void, onJoke: () => 
   const mic = h('button', { type: 'button', class: 'dock-mic muted', 'aria-pressed': 'false', 'aria-label': T.micOff });
   const joke = h('button', { type: 'button', class: 'dock-btn dock-joke', 'aria-label': T.jokeBtn, title: T.jokeBtn }, icon('joke'), h('span', { class: 'dock-lbl' }, T.jokeBtn));
   const host = h('button', { type: 'button', class: 'dock-btn dock-host', 'aria-label': T.claimHost, title: T.claimHost }, icon('crown'), h('span', { class: 'dock-lbl' }, T.claimHost));
-  const chat = h('button', { type: 'button', class: 'dock-btn dock-chat', 'aria-label': T.chat, title: T.chat }, icon('chat'));
+  const chat = h('button', { type: 'button', class: 'dock-btn dock-chat', 'aria-label': T.chat, title: T.chat }, icon('chat'), h('span', { class: 'dock-lbl' }, T.chatLabel));
   const el = h('div', { class: 'dock', hidden: true }, mic, host, joke, chat);
   mic.addEventListener('click', () => { navigator.vibrate?.(10); onMic(); });
   chat.addEventListener('click', onChat);
@@ -18,7 +18,7 @@ export function createDock(onMic: () => void, onChat: () => void, onJoke: () => 
   host.addEventListener('click', onHost);
   let unread = 0;
   const drawChat = () => {
-    clear(chat, icon('chat'), unread ? h('span', { class: 'badge dock-badge' }, String(unread)) : null);
+    clear(chat, icon('chat'), h('span', { class: 'dock-lbl' }, T.chatLabel), unread ? h('span', { class: 'badge dock-badge' }, String(unread)) : null);
     chat.setAttribute('aria-label', unread ? `${T.chat} (${unread})` : T.chat);
   };
   drawChat();

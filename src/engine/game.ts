@@ -52,11 +52,13 @@ export interface GameState {
   turns: number;
   /** Both teams finished: no more plays. */
   over: boolean;
+  /** The one first-turn skip of this game was used (optional: games saved before Skip existed). */
+  skipUsed?: boolean;
 }
 
 export type PlayResult =
   | { ok: true; events: GameEvent[] }
-  | { ok: false; code: 'not_turn' | 'no_card' | 'illegal' | 'ended' };
+  | { ok: false; code: 'not_turn' | 'no_card' | 'illegal' | 'ended' | 'no_skip' };
 
 /** True when this seat's team already brought all 8 marbles home (seat is skipped). */
 export function seatDone(state: GameState, seat: Seat): boolean {
@@ -439,6 +441,27 @@ export function applyPlay(state: GameState, seat: Seat, play: Play, rng: Rng): P
   return { ok: true, events };
 }
 
+/** Skip is only for the very first turn of a game, once: no card played yet and no skip used yet. */
+export function canSkip(state: GameState, seat: Seat | null): boolean {
+  return seat !== null && !state.over && state.turn === seat && !seatDone(state, seat)
+    && (state.turns ?? 0) === 0 && !state.skipUsed && state.discard.length === 0;
+}
+
+/**
+ * Skip (owner request): only the player holding the very first turn of the game, once per game, may pass
+ * so the next player starts normally. The hand stays unchanged, no marble moves, `turns` is not counted.
+ * Mutates `state` only on success.
+ */
+export function applySkip(state: GameState, seat: Seat, rng: Rng): PlayResult {
+  if (state.over || seatDone(state, seat)) return { ok: false, code: 'ended' };
+  if (state.turn !== seat) return { ok: false, code: 'not_turn' };
+  if (!canSkip(state, seat)) return { ok: false, code: 'no_skip' };
+  state.skipUsed = true;
+  const events: GameEvent[] = [{ kind: 'skip', seat }];
+  advanceTurn(state, rng, events, false);
+  return { ok: true, events };
+}
+
 function allHandsEmpty(state: GameState): boolean {
   return state.hands.every((h) => h.length === 0);
 }
@@ -476,6 +499,7 @@ export function buildGameView(state: GameState, viewer: Seat | null, paused: boo
     last: state.last ? { ...state.last, card: { ...state.last.card } } : null,
     controls: viewer === null ? [] : controlledMarbles(state, viewer),
     paused,
+    canSkip: canSkip(state, viewer),
   };
 }
 
