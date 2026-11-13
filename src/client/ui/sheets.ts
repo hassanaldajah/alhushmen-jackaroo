@@ -24,7 +24,7 @@ export function openHelp(hintsOn: () => boolean, setHints: (on: boolean) => void
 
 export interface GfxCtl { quality(): Quality; set(q: Quality): void }
 const save = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
-export function openSettings(root: HTMLElement, gfx?: GfxCtl, onLogout?: () => void): void {
+export function openSettings(root: HTMLElement, gfx?: GfxCtl, onLogout?: () => void, onNewGame?: () => void): void {
   const s = openSheet(T.settings, { side: true });
   const sw = (label: string, on: boolean, f: (v: boolean) => void) => {
     const i = h('input', { type: 'checkbox' }) as HTMLInputElement; i.checked = on; i.addEventListener('change', () => f(i.checked));
@@ -42,11 +42,18 @@ export function openSettings(root: HTMLElement, gfx?: GfxCtl, onLogout?: () => v
     sw(T.jokeSetting, jokesEnabled(), setJokesEnabled),
     sw(T.autoJokes, autoJokesEnabled(), setAutoJokesEnabled),
     sw(T.contrast, html.dataset.hc === '1', (v) => { html.dataset.hc = v ? '1' : '0'; save('hc', html.dataset.hc); }),
+    ...(onNewGame ? [h('hr', { class: 'sep' }), button(T.newGameAbort, 'btn-secondary btn-block', () => { s.close(); confirmNewGame(onNewGame); })] : []),
     ...(onLogout ? [h('hr', { class: 'sep' }), button(T.logout, 'btn-danger btn-block', () => { s.close(); confirmLogout(onLogout); }, 'logout')] : []));
   void root;
 }
 
 /** "Are you sure?" before leaving: logging out drops the seat and the saved name on this device. */
+export function confirmNewGame(onYes: () => void): void {
+  const s = openSheet(T.newGameAbort, { center: true });
+  s.body.append(h('p', { class: 'muted' }, T.newGameAsk),
+    h('div', { class: 'row' }, button(T.yes, 'btn-danger', () => { s.close(); onYes(); }), button(T.cancel, 'btn-secondary', () => s.close())));
+}
+
 export function confirmLogout(onYes: () => void): void {
   const s = openSheet(T.logout, { center: true });
   s.body.append(h('p', { class: 'muted' }, T.logoutAsk),

@@ -22,6 +22,8 @@ import {
 import { shuffle, type Rng } from '../engine/rng';
 import { cleanChat, cleanName } from './validate';
 
+/** Empty room for this long: the unfinished game is discarded and the room returns to the lobby (nothing saved). */
+export const IDLE_RESET_MS = 10 * 60_000;
 export const SEAT_HOLD_MS = 5 * 60_000; // a player may leave the browser up to 5 min and keep the seat
 export const MSG_PER_10S = 120;
 export const SIGNAL_PER_10S = 200;
@@ -52,6 +54,8 @@ export interface RoomState {
   banned: string[];
   host: string | null;
   hostLeftAt: number | null;
+  /** When the last socket left; an unfinished game is dropped after IDLE_RESET_MS of an empty room. */
+  idleSince?: number | null;
   vote: Vote | null;
   voteCooldownUntil: number;
   /** Agreed partner pairs (sids); valid only while both sit opposite each other. */
@@ -374,6 +378,7 @@ export class RoomCore {
   connect(key: string, sid: string, now: number): Out[] {
     if (this.s.banned.includes(sid)) return [{ close: key, code: CLOSE_KICKED, reason: 'kicked' }];
     this.s.bans = this.s.bans.filter((b) => b.until > now);
+    this.idleReset(now); // first person back after a long empty room finds the lobby, never the old game
     const out: Out[] = [];
     // One socket per session: replace older ones.
     for (const c of this.connsOfSid(sid)) {
@@ -397,6 +402,7 @@ export class RoomCore {
       }
     }
     if (this.s.host === sid) this.s.hostLeftAt = null;
+    this.s.idleSince = null;
     this.person(sid);
     this.conns.set(key, { key, sid, muted: true });
     const hist: Out = { to: key, msg: { t: 'chatHistory', msgs: this.chat.map((m) => ({ ...m })) } };
@@ -415,6 +421,7 @@ export class RoomCore {
       this.musicRate.delete(c.sid);
       this.chatRate.delete(c.sid);
     }
+    if (this.conns.size === 0) this.s.idleSince = now;
     this.tidy(now);
     return this.changed(now, this.evalVote(now));
   }
@@ -435,6 +442,13 @@ export class RoomCore {
       if (r && !r.open && r.leftAt === null && !live.has(r.sid)) { r.leftAt = now; this.dirty = true; }
     }
     if (this.s.host && this.s.hostLeftAt === null && !live.has(this.s.host)) { this.s.hostLeftAt = now; this.dirty = true; }
+    if (this.conns.size === 0 && !this.s.idleSince) {
+      // No record of when the room emptied (older state or a restart): the latest seat departure is the best estimate.
+      const left = this.s.seats.filter((r): r is SeatRec => !!r).map((r) => r.leftAt ?? now);
+      this.s.idleSince = left.length ? Math.max(...left) : now;
+      this.dirty = true;
+    }
+    this.idleReset(now);
     if (this.dirty) this.syncPause(now);
     return drop;
   }
@@ -445,11 +459,12 @@ export class RoomCore {
     for (const r of this.s.seats) if (r && r.leftAt !== null && !r.open) t = Math.min(t, r.leftAt + SEAT_HOLD_MS);
     if (this.s.host && this.s.hostLeftAt !== null) t = Math.min(t, this.s.hostLeftAt + HOST_GRACE_MS);
     if (this.s.vote) t = Math.min(t, this.s.vote.endsAt);
+    if (this.s.idleSince && this.s.phase !== 'lobby') t = Math.min(t, this.s.idleSince + IDLE_RESET_MS);
     return t === Infinity ? null : t;
   }
 
   alarm(now: number): Out[] {
-    let changed = false;
+    let changed = this.idleReset(now);
     const events: GameEvent[] = [];
     const out: Out[] = [];
     this.s.seats.forEach((r, i) => {
@@ -476,6 +491,33 @@ export class RoomCore {
     if (!changed) return [];
     const ev: Out[] = events.length ? this.broadcast({ t: 'event', kind: 'pause', events }) : [];
     return this.changed(now, [...ev, ...out]);
+  }
+
+  /** Between-games lobby: same people, teams kept (if still seated opposite), seats may change. Saves nothing. */
+  private resetToLobby(): void {
+    const s = this.s;
+    s.phase = 'lobby';
+    s.game = null;
+    s.winner = null;
+    s.clock = null;
+    s.finishes = [];
+    s.result = null;
+    s.seats.forEach((r, i) => { if (r) { if (r.open) s.seats[i] = null; else r.ready = false; } });
+  }
+
+  /**
+   * Room empty for IDLE_RESET_MS: the unfinished game is discarded (results are saved only when a game ends)
+   * and every seat is freed, so whoever opens the game next starts from a clean lobby.
+   */
+  private idleReset(now: number): boolean {
+    const s = this.s;
+    if (this.conns.size > 0 || !s.idleSince || s.idleSince + IDLE_RESET_MS > now) return false;
+    s.idleSince = null;
+    this.dirty = true;
+    if (s.phase === 'lobby') return false;
+    this.resetToLobby();
+    s.seats = s.seats.map(() => null);
+    return true;
   }
 
   private nameBanned(name: string, now: number): boolean {
@@ -589,14 +631,8 @@ export class RoomCore {
       case 'toLobby':
         if (!isHost) return this.err(key, 'not_host');
         if (m.t === 'again' && s.phase !== 'ended') return this.err(key, 'not_allowed');
-        // Between-games lobby: same people, teams kept (if still seated opposite), seats may change.
-        s.phase = 'lobby';
-        s.game = null;
-        s.winner = null;
-        s.clock = null;
-        s.finishes = [];
-        s.result = null;
-        s.seats.forEach((r, i) => { if (r) { if (r.open) s.seats[i] = null; else r.ready = false; } });
+        // New game: an unfinished game is discarded (its result is only saved when a game really ends).
+        this.resetToLobby();
         return this.changed(now);
 
       case 'kick': {

@@ -31,7 +31,7 @@ export const T = {
   swapSeat: 'بدّل مكان', breakPartner: 'فك الشراكة', scoreboard: 'النتائج', people: 'الموجودين', waitHost: 'بانتظار المضيف', you2: 'أنت',
   hostSheet: 'اختار المضيف', voteOf: (a: number, b: number) => `${a} من ${b}`, teamsTab: 'الفرق', playersTab: 'اللاعبين', noGames: 'ما في ألعاب محفوظة',
   keep6: 'نحتفظ بآخر 6 أشهر', wins: 'فوز', games: 'لعبة', and: ' و ', saveErr: 'ما انحفظت، حاول مرة ثانية',
-  saving: 'نحفظ النتيجة', saved: 'انحفظت', newGame: 'لعبة جديدة', results: 'النتائج', leaveR: 'اطلع', winnerOf: (t: string) => `فاز ${t}`,
+  saving: 'نحفظ النتيجة', saved: 'انحفظت', newGame: 'لعبة جديدة', newGameAbort: 'لعبة جديدة (ألغِ الحالية)', newGameAsk: 'اللعبة الحالية رح تنحذف وما بتنحفظ نتيجتها، وبترجعوا على الصالة.', results: 'النتائج', leaveR: 'اطلع', winnerOf: (t: string) => `فاز ${t}`,
   first: 'الأول', second: 'الثاني', finishTime: 'وقت الإنهاء', turns: 'الأدوار', marblesHome: 'الحجارة بالبيت', margin: (t: string, n: number) => `الفرق: ${t} و ${n} أدوار`,
   total: (t: string) => `مدة اللعبة: ${t}`, wasExpected: (n: number) => `المتوقعة كانت: ${n} دقيقة`, teamDoneWait: (a: string, b: string) => `${a} خلّص! بانتظار ${b}`,
   joke: 'إفيه', jokeSetting: 'إفيه الموزّع', jokeOff: 'إخفاء الإفيهات',

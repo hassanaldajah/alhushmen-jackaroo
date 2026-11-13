@@ -133,7 +133,8 @@ export function startApp(root: HTMLElement, net: Net): void {
 
   const openScore = () => openScoreboard(net, view?.you.name ?? '');
   const askLogout = () => confirmLogout(() => void logout());
-  const openMenu = () => openSettings(root, bridge ? { quality: () => bridge?.quality ?? 'high', set: (q) => bridge?.setQuality(q) } : undefined, () => void logout());
+  const openMenu = () => openSettings(root, bridge ? { quality: () => bridge?.quality ?? 'high', set: (q) => bridge?.setQuality(q) } : undefined, () => void logout(),
+    view?.you.host && view.phase === 'playing' ? () => net.send({ t: 'toLobby' }) : undefined);
 
   function dropTable(): void {
     table?.destroy(); bridge?.dispose();
