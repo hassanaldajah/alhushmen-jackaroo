@@ -1,6 +1,6 @@
 import type { Net, RoomView, SearchResult } from '../net/types';
 import type { Quality } from '../scene';
-import { jokesEnabled, setJokesEnabled } from './joke';
+import { autoJokesEnabled, jokesEnabled, setAutoJokesEnabled, setJokesEnabled } from './joke';
 import type { VoiceMesh } from '../voice/mesh';
 import { sfx } from '../audio/sfx';
 import { h, icon, clear, bdi } from './dom';
@@ -23,7 +23,8 @@ export function openHelp(hintsOn: () => boolean, setHints: (on: boolean) => void
 }
 
 export interface GfxCtl { quality(): Quality; set(q: Quality): void }
-export function openSettings(root: HTMLElement, gfx?: GfxCtl): void {
+const save = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
+export function openSettings(root: HTMLElement, gfx?: GfxCtl, onLogout?: () => void): void {
   const s = openSheet(T.settings, { side: true });
   const sw = (label: string, on: boolean, f: (v: boolean) => void) => {
     const i = h('input', { type: 'checkbox' }) as HTMLInputElement; i.checked = on; i.addEventListener('change', () => f(i.checked));
@@ -34,13 +35,22 @@ export function openSettings(root: HTMLElement, gfx?: GfxCtl): void {
   vol.addEventListener('input', () => { sfx.setVolume(Number(vol.value) / 100); sfx.play('tick'); });
   const html = document.documentElement;
   s.body.append(
-    h('label', null, T.sfx, vol),
+    h('label', { class: 'field' }, T.sfx, vol),
     sw(T.sfxMute, sfx.muted, (v) => sfx.setMuted(v)),
-    sw(T.motion, html.dataset.motion === 'reduce', (v) => { html.dataset.motion = v ? 'reduce' : 'full'; localStorage.setItem('motion', html.dataset.motion); }),
+    sw(T.motion, html.dataset.motion === 'reduce', (v) => { html.dataset.motion = v ? 'reduce' : 'full'; save('motion', html.dataset.motion); }),
     ...(gfx ? [sw(T.quality, gfx.quality() === 'high', (v) => gfx.set(v ? 'high' : 'low'))] : []),
     sw(T.jokeSetting, jokesEnabled(), setJokesEnabled),
-    sw(T.contrast, html.dataset.hc === '1', (v) => { html.dataset.hc = v ? '1' : '0'; localStorage.setItem('hc', html.dataset.hc); }));
+    sw(T.autoJokes, autoJokesEnabled(), setAutoJokesEnabled),
+    sw(T.contrast, html.dataset.hc === '1', (v) => { html.dataset.hc = v ? '1' : '0'; save('hc', html.dataset.hc); }),
+    ...(onLogout ? [h('hr', { class: 'sep' }), button(T.logout, 'btn-danger btn-block', () => { s.close(); confirmLogout(onLogout); }, 'logout')] : []));
   void root;
+}
+
+/** "Are you sure?" before leaving: logging out drops the seat and the saved name on this device. */
+export function confirmLogout(onYes: () => void): void {
+  const s = openSheet(T.logout, { center: true });
+  s.body.append(h('p', { class: 'muted' }, T.logoutAsk),
+    h('div', { class: 'row' }, button(T.logout, 'btn-danger', () => { s.close(); onYes(); }, 'logout'), button(T.cancel, 'btn-secondary', () => s.close())));
 }
 
 export function openVoice(v: RoomView, voice: VoiceMesh): { refresh(v: RoomView): void } {

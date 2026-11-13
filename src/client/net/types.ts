@@ -31,6 +31,10 @@ export interface Net {
   gate(pass: string): Promise<GateReply>;
   /** True when the browser already holds a valid login cookie (refresh keeps you in). */
   hasSession?(): Promise<boolean>;
+  /** Clear the login cookie on the server (POST /api/logout, same-origin). */
+  logout?(): Promise<boolean>;
+  /** Close the room socket for good (no reconnect). */
+  close?(): void;
   connect(): void;
   send(m: ClientMsg): void;
   search(q: string): Promise<SearchReply>;

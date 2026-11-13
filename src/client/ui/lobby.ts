@@ -1,7 +1,7 @@
 import type { Net, RoomView, SeatView } from '../net/types';
 import { h, icon, clear, bdi } from './dom';
 import { T } from './ar';
-import { button, openSheet } from './widgets';
+import { button, iconButton, openSheet } from './widgets';
 
 export function teamLabel(t: 'A' | 'B'): string { return t === 'A' ? T.teamA : T.teamB; }
 export function teamChip(t: 'A' | 'B'): HTMLElement {
@@ -26,6 +26,13 @@ export function seatTile(s: SeatView, opts: { turn?: boolean; me?: boolean; host
 
 export function brandCorner(): HTMLElement { return h('div', { class: 'brand-corner', 'aria-hidden': 'true' }, 'جاكارو الحُشمين'); }
 
+/** Top bar of the pre-game screens: brand on the start side, settings + logout on the end side. */
+function topBar(ctx: LobbyCtx): HTMLElement {
+  return h('div', { class: 'topbar' }, brandCorner(), h('span', { class: 'spacer' }),
+    iconButton('settings', T.settings, ctx.openMenu, 'top-btn'),
+    iconButton('logout', T.logout, ctx.logout, 'top-btn'));
+}
+
 let nameError = '';
 let autoTried = false;
 /** Called by the app when the server rejects a name. */
@@ -35,6 +42,8 @@ export interface LobbyCtx {
   setName(n: string, asSpectator: boolean): void;
   openScore(): void;
   openChat(): void;
+  openMenu(): void;
+  logout(): void;
   remembered: string | null;
 }
 
@@ -64,9 +73,9 @@ function nameScreen(root: HTMLElement, ctx: LobbyCtx): void {
   } },
   h('h1', null, T.nameTitle), h('label', { for: 'nm', class: 'sr' }, T.nameTitle),
   h('div', { class: 'field' }, input, counter), err, segs,
-  h('button', { class: 'btn btn-primary', type: 'submit' }, T.nameGo));
-  clear(root, h('div', { class: 'screen' }, brandCorner(), form));
-  input.focus();
+  h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, T.nameGo));
+  clear(root, h('div', { class: 'screen' }, topBar(ctx), form));
+  input.focus({ preventScroll: true });
 }
 
 interface Person { id: string; name: string; seat: number | null; connected: boolean }
@@ -145,7 +154,7 @@ export function renderLobby(root: HTMLElement, v: RoomView, net: Net, ctx: Lobby
   const startBtn = button(T.start, 'btn-primary', () => net.send({ t: 'start' }));
   if (!v.canStart) { startBtn.disabled = true; startBtn.setAttribute('aria-disabled', 'true'); }
 
-  clear(root, h('div', { class: 'screen scroll' }, brandCorner(), h('div', { class: 'center' },
+  clear(root, h('div', { class: 'screen scroll lobby' }, topBar(ctx), h('div', { class: 'center' },
     h('h1', null, T.room),
     hostArea,
     grid,
@@ -153,10 +162,9 @@ export function renderLobby(root: HTMLElement, v: RoomView, net: Net, ctx: Lobby
     h('h2', null, `${T.people}: ${people.length}`, h('span', { class: 'cnt' }, ` (المتصلين: ${online})`)), list,
     h('div', { class: 'muted' }, `${T.expected}: ${T.minutes(mins)}`),
     !v.canStart ? h('div', { class: 'muted' }, T.needTeams) : null,
-    h('div', { class: 'row wrap' },
-      v.you.seat === null && !v.you.spectator ? button(T.spectate, 'btn-secondary', () => net.send({ t: 'spectate' })) : null,
+    h('div', { class: 'lobby-actions' },
+      v.you.host ? startBtn : h('span', { class: 'muted wait-host' }, T.waitHost),
       v.you.host ? button(T.shuffle, 'btn-secondary', () => confirmSheet(T.shuffleAsk, () => net.send({ t: 'shuffleTeams' }))) : null,
-      v.you.host ? startBtn : h('span', { class: 'muted' }, T.waitHost),
-      button(T.chat, 'btn-secondary', ctx.openChat, 'chat'),
+      v.you.seat === null && !v.you.spectator ? button(T.spectate, 'btn-secondary', () => net.send({ t: 'spectate' })) : null,
       button(T.scoreboard, 'btn-secondary', ctx.openScore, 'bars')))));
 }

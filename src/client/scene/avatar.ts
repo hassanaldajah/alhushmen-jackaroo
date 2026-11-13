@@ -6,7 +6,7 @@ import { SEAT_COLORS } from './colors';
 import { SEAT_D } from './layout';
 
 const SKIN = [0xe3b48a, 0xc68a5e, 0xf0c8a0, 0x9a6a46];
-const HEAD = [0xf2eadb, 0x7a1f1c, 0x2a1a12, 0x1f6b57]; // cap / fez / hair / headscarf
+const HEAD = [0xf2eadb, 0x7a1f1c, 0x2a1a12, 0x6b2a3a]; // cap / fez / hair / headscarf (plum: no green)
 const UP = new Vector3(0, 1, 0);
 const L1 = 2.5, L2 = 2.5; // bone lengths (arms are long on purpose: the table is wide)
 const SHOULDER_Y = 1.5, SHOULDER_X = 1.05;

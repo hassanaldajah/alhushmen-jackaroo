@@ -2,15 +2,23 @@ import { h, icon, clear } from './dom';
 import { T } from './ar';
 import type { MicState } from '../voice/mesh';
 
-/** Left-edge dock, always visible (lobby and table): one big mic button (tap = mute/unmute) and chat. */
-export function createDock(onMic: () => void, onChat: () => void) {
+/**
+ * Left-edge dock (lobby and table only, never before login): the big mic button (tap = mute/unmute),
+ * the joke button right under it, then chat. Hidden on the intro, the passphrase gate and every end screen.
+ */
+export function createDock(onMic: () => void, onChat: () => void, onJoke: () => void) {
   const mic = h('button', { type: 'button', class: 'dock-mic muted', 'aria-pressed': 'false', 'aria-label': T.micOff });
-  const chat = h('button', { type: 'button', class: 'dock-chat', 'aria-label': T.chat }, icon('chat'));
-  const el = h('div', { class: 'dock', hidden: true }, mic, chat);
+  const joke = h('button', { type: 'button', class: 'dock-btn dock-joke', 'aria-label': T.jokeBtn, title: T.jokeBtn }, icon('joke'), h('span', { class: 'dock-lbl' }, T.jokeBtn));
+  const chat = h('button', { type: 'button', class: 'dock-btn dock-chat', 'aria-label': T.chat, title: T.chat }, icon('chat'));
+  const el = h('div', { class: 'dock', hidden: true }, mic, joke, chat);
   mic.addEventListener('click', () => { navigator.vibrate?.(10); onMic(); });
   chat.addEventListener('click', onChat);
+  joke.addEventListener('click', onJoke);
   let unread = 0;
-  const drawChat = () => { clear(chat, icon('chat'), unread ? h('span', { class: 'badge dock-badge' }, String(unread)) : null); };
+  const drawChat = () => {
+    clear(chat, icon('chat'), unread ? h('span', { class: 'badge dock-badge' }, String(unread)) : null);
+    chat.setAttribute('aria-label', unread ? `${T.chat} (${unread})` : T.chat);
+  };
   drawChat();
   const labels: Record<MicState, [string, string, string]> = {
     live: ['live', 'mic', T.micLive], muted: ['muted', 'mic-off', T.micMuted], listen: ['muted', 'mic-off', T.micMuted],
@@ -18,7 +26,8 @@ export function createDock(onMic: () => void, onChat: () => void) {
   };
   return {
     el,
-    show(on: boolean): void { el.hidden = !on; },
+    get shown(): boolean { return !el.hidden; },
+    show(on: boolean): void { el.hidden = !on; document.documentElement.classList.toggle('has-dock', on); },
     setMic(state: MicState, speaking: boolean): void {
       const [cls, ic, lbl] = labels[state];
       mic.className = 'dock-mic ' + cls + (speaking ? ' speaking' : '');
@@ -27,5 +36,7 @@ export function createDock(onMic: () => void, onChat: () => void) {
       clear(mic, icon(ic), h('span', { class: 'dock-lbl' }, state === 'live' ? T.micLive : T.micMuted));
     },
     setUnread(n: number): void { unread = n; drawChat(); },
+    /** Brief "wait" state while the joke cooldown runs. */
+    jokeBusy(on: boolean): void { joke.toggleAttribute('aria-busy', on); joke.classList.toggle('busy', on); },
   };
 }

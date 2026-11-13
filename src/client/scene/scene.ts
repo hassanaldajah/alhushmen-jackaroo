@@ -1,34 +1,35 @@
 import {
-  ACESFilmicToneMapping, AmbientLight, BoxGeometry, BufferAttribute, BufferGeometry, CircleGeometry, Color, DirectionalLight,
-  DoubleSide, ExtrudeGeometry, FogExp2, Float32BufferAttribute, HemisphereLight, InstancedMesh, Material, Mesh, MeshBasicMaterial,
-  MeshPhysicalMaterial, MeshStandardMaterial, Object3D, PCFSoftShadowMap, PerspectiveCamera, Path, PlaneGeometry, Points,
-  PointsMaterial, Raycaster, Scene, Shape, SphereGeometry, SpotLight, Texture, Vector2, Vector3, WebGLRenderer,
+  ACESFilmicToneMapping, AdditiveBlending, AmbientLight, BoxGeometry, BufferAttribute, BufferGeometry, CircleGeometry, Color,
+  DirectionalLight, DoubleSide, ExtrudeGeometry, FogExp2, Float32BufferAttribute, HemisphereLight, InstancedMesh, Material, Mesh,
+  MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial, Object3D, PCFSoftShadowMap, PerspectiveCamera, Path, Plane,
+  PlaneGeometry, Points, PointsMaterial, Raycaster, RingGeometry, Scene, Shape, ShapeGeometry, SphereGeometry, SpotLight, Texture,
+  Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { C, CSS, SEAT_COLORS } from './colors';
 import { Tweens, easeInOut, easeOut, linear } from './tween';
 import {
-  BOARD_Y, CARD_H, CARD_W, MARBLE_R, ZOOM_SCALE, allCells, deckPose, handAnchors, handPose, posToXZ, rot, screenPos, tablePose, zoomPose,
+  BASE_DX, BASE_Z, BOARD_HALF, BOARD_Y, CARD_H, CARD_W, CELL, FRAME_HALF, MARBLE_R, NPC_POS, PER, TABLE_CARD_SCALE, TRACK, ZOOM_SCALE,
+  allCells, cardJitter, deckPose, framePoints, handAnchors, handPose, localHome, posToXZ, rot, samePos, screenPos, tablePose, trackXZ, zoomPose,
 } from './layout';
 import type { HandMode, Pose } from './layout';
 import { BACK_INDEX, atlasUV, buildAtlas, faceIndex, outlineTexture } from './textures';
-import { bokehTexture, buildEnvironment, feltMaps, softCircleTexture, swirlNormal, woodMaps } from './materials';
+import { bokehTexture, buildEnvironment, feltMaps, softCircleTexture, starTexture, swirlNormal, woodMaps } from './materials';
 import type { PbrMaps } from './materials';
 import { createAvatar } from './avatar';
 import type { Avatar } from './avatar';
+import { createNpc } from './npc';
 import { buildCafe } from './cafe';
-import type { CardRef, Hints, MarblePos, MoveEvent, Quality, SceneApi, SceneEvents, SceneOptions, SceneView, SfxName } from './types';
+import type { CardRef, Hints, MarblePos, MoveEvent, Quality, SceneApi, SceneEvents, SceneOptions, SceneView, SfxName, Targets } from './types';
 
 const REST_Y = BOARD_Y + MARBLE_R;
 const rad = (d: number) => (d * Math.PI) / 180;
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const GFX_KEY = 'gfx';
-
-export function isWebGLAvailable(): boolean {
-  try {
-    const c = document.createElement('canvas');
-    return !!(c.getContext('webgl2') || c.getContext('webgl'));
-  } catch { return false; }
-}
+// Orbit limits (camera distance multiplier and elevation).
+const ZOOM_MIN = 0.5, ZOOM_MAX = 1.6, PITCH_MIN = rad(24), PITCH_MAX = rad(84);
+const DAMP_S = 0.085; // camera damping time constant (frame-rate independent)
+const SLOP = 9;       // px before a press becomes a drag
 
 function readGfx(): Quality | null {
   try { const v = localStorage.getItem(GFX_KEY); return v === 'low' || v === 'high' ? v : null; } catch { return null; }
@@ -36,7 +37,7 @@ function readGfx(): Quality | null {
 
 interface CardObj { mesh: Mesh; outline: Mesh; id: string; face: CardRef | null; pose: Pose; sc: number; fx: number }
 
-/** Returns null when WebGL is unavailable: the UI then shows the 2D SVG fallback. */
+/** Returns null when WebGL is unavailable: the UI then shows the 2D fallback. */
 export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}): SceneApi | null {
   const ev: SceneEvents = opts.events ?? {};
   let quality: Quality = opts.quality ?? readGfx() ?? 'high';
@@ -58,7 +59,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   const scene = new Scene();
   scene.background = new Color(C.wood900);
   scene.fog = new FogExp2(0x1e140d, 0.006);
-  const camera = new PerspectiveCamera(32, 1, 0.5, 400);
+  // near = 2: nothing comes closer at any zoom; better depth precision for the decals lying on the board
+  const camera = new PerspectiveCamera(32, 1, 2, 400);
   renderer.setClearColor(C.wood900);
 
   // ---------- state ----------
@@ -68,32 +70,40 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
   const coarse = typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : null;
   const reduced = () => (reducedOverride ?? mq?.matches ?? false);
-  let insetTop = 0, insetBottom = 0, zoom = 1;
+  // Phones get smaller procedural maps (faster first frame, less memory); desktops keep 1k maps.
+  const small = !!coarse?.matches || Math.min(innerWidth, innerHeight) < 700;
+  let insetTop = 0, insetBottom = 0;
   let degrade = 0;
   let sel: { cardId: string | null; marbleId: number | null } = { cardId: null, marbleId: null };
   let peekId: string | null = null, hoverId: string | null = null;
   let hints: Hints | null = null;
+  let targets: Targets | null = null;
   let lastView: SceneView | null = null;
   let mode: HandMode = { phone: false, el: rad(48) };
 
   // ---------- quality ----------
   const dprCap = () => (quality === 'low' ? 1.25 : degrade >= 3 ? 1.5 : 2);
-  const shadowSize = () => (quality === 'low' || degrade >= 4 ? 1024 : 2048);
+  const shadowSize = () => (quality === 'low' || degrade >= 4 ? 1024 : small ? 1024 : 2048);
   const steamOn = () => quality === 'high' && degrade < 1;
   const mirrorOn = () => quality === 'high' && degrade < 2;
-  const continuous = () => quality === 'high' && !reduced() && document.visibilityState !== 'hidden';
+  // Idle animation (steam, pirate) only while the table is in front: not behind a modal sheet (inert) or a hidden tab.
+  const continuous = () => quality === 'high' && !reduced() && document.visibilityState !== 'hidden' && !canvas.closest('[inert]');
+  const texSize = (q: Quality) => (q === 'high' ? (small ? 512 : 1024) : 256);
 
   // ---------- render on demand ----------
-  let raf = 0, lastActive = 0, lastRender = 0, prevT = 0, shadowDirty = true;
+  let raf = 0, lastActive = 0, lastRender = 0, prevT = 0, shadowDirty = true, lastFrame = 0;
   let winSum = 0, winN = 0;
-  const tweens = new Tweens(() => request());
-  function request() { shadowDirty = true; if (!raf && !disposed) raf = requestAnimationFrame(frame); }
+  const tweens = new Tweens(() => request(true));
+  function request(shadow = false) { if (shadow) shadowDirty = true; if (!raf && !disposed) raf = requestAnimationFrame(frame); }
   function frame(now: number) {
     raf = 0;
     if (disposed || document.visibilityState === 'hidden') return;
+    const dt = Math.min(0.1, lastFrame ? (now - lastFrame) / 1000 : 1 / 60);
+    lastFrame = now;
     const active = tweens.step(now);
+    const camMoving = stepCamera(dt);
     const cont = continuous();
-    const minGap = quality === 'low' ? 30 : !active && cont ? 32 : 0;
+    const minGap = quality === 'low' ? 30 : !active && !camMoving && !dragging() && cont ? 32 : 0;
     if (minGap && now - lastRender < minGap) { raf = requestAnimationFrame(frame); return; }
     if (active) {
       lastActive = now;
@@ -104,13 +114,13 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       prevT = now;
     } else { prevT = 0; winSum = 0; winN = 0; }
     lastRender = now;
-    if (cont) { camDrift = Math.sin((now / 8000) * Math.PI * 2) * rad(0.4); poseCamera(); }
-    else if (camDrift !== 0) { camDrift = 0; poseCamera(); }
     if (steamOn()) cafe.steam.tick(now / 1000);
+    if (cont) npc.tick(now / 1000);
     renderer.shadowMap.needsUpdate = active || shadowDirty;
     shadowDirty = false;
     renderer.render(scene, camera);
-    if (active || cont || now - lastActive < 250) raf = requestAnimationFrame(frame);
+    ev.onFrame?.();
+    if (active || camMoving || dragging() || cont || now - lastActive < 250) raf = requestAnimationFrame(frame);
   }
   function degradeStep() {
     degrade++;
@@ -122,7 +132,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   // ---------- lights ----------
   const hemi = new HemisphereLight(0x6b4a2b, 0x1e140d, 1.3);
   const rim = new DirectionalLight(0xffb070, 1.8); rim.position.set(-14, 10, -16);
-  const lamp = new SpotLight(0xffd9a0, 1500, 0, 0.75, 0.8, 2);
+  const lamp = new SpotLight(0xffd9a0, 1500, 0, 0.78, 0.8, 2);
   lamp.position.set(0, 24, 2); lamp.target.position.set(0, 0, 0);
   lamp.castShadow = true;
   lamp.shadow.camera.near = 10; lamp.shadow.camera.far = 45;
@@ -133,13 +143,14 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   const swirl = track(swirlNormal());
   const soft = track(softCircleTexture());
   const bokeh = track(bokehTexture());
-  let wood: PbrMaps = woodMaps(quality === 'high' ? 1024 : 512);
-  let feltM: PbrMaps = feltMaps(quality === 'high' ? 1024 : 512);
+  const star = track(starTexture());
+  let wood: PbrMaps = woodMaps(texSize(quality));
+  let feltM: PbrMaps = feltMaps(texSize(quality));
   let atlas = buildAtlas(renderer.capabilities.getMaxAnisotropy(), quality === 'high' ? 2048 : 1024);
-  let envTex: Texture = buildEnvironment(renderer, quality === 'high' ? 256 : 64);
+  let envTex: Texture = buildEnvironment(renderer, quality === 'high' ? (small ? 128 : 256) : 64);
   scene.environment = envTex; scene.environmentIntensity = quality === 'high' ? 0.5 : 0.4;
 
-  // ---------- café set + board ----------
+  // ---------- cafe set + square board ----------
   const cafe = buildCafe(wood.map, wood.bump, bokeh, soft);
   scene.add(cafe.group);
   cafe.group.traverse((o) => { if (o instanceof Mesh && o.castShadow === false) o.receiveShadow = true; });
@@ -155,10 +166,10 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     g.rotateX(-Math.PI / 2);
     return track(g);
   }
-  const feltMat = track(new MeshPhysicalMaterial({ map: feltM.map, bumpMap: feltM.bump, bumpScale: 0.8, roughness: 0.95, sheen: 0.6, sheenColor: new Color(C.felt500), sheenRoughness: 0.8 }));
+  const feltMat = track(new MeshPhysicalMaterial({ map: feltM.map, bumpMap: feltM.bump, bumpScale: 0.7, roughness: 0.9, sheen: 0.5, sheenColor: new Color(C.brass700), sheenRoughness: 0.8 }));
   const woodMat = track(new MeshPhysicalMaterial({ map: wood.map, bumpMap: wood.bump, bumpScale: 1.2, roughness: 0.55, clearcoat: 0.25, clearcoatRoughness: 0.4 }));
   const brassMat = track(new MeshStandardMaterial({ color: C.brass500, metalness: 1, roughness: 0.28 }));
-  const BW = 11.4, FW = 10.2;
+  const BW = FRAME_HALF * 2, FW = BOARD_HALF * 2;
   const base = new Mesh(track(new BoxGeometry(BW, BOARD_Y, BW)), woodMat);
   base.position.y = BOARD_Y / 2; base.receiveShadow = true;
   const felt = new Mesh(track(new PlaneGeometry(FW, FW)), feltMat);
@@ -169,63 +180,132 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   brass.position.y = BOARD_Y;
   scene.add(base, felt, rimM, brass);
 
-  const discGeo = track(new CircleGeometry(1, 20));
-  discGeo.rotateX(-Math.PI / 2);
-  const CELLS = allCells();
-  const NHOLE = CELLS.length + 16;
-  const holes = new InstancedMesh(discGeo, track(new MeshStandardMaterial({ roughness: 0.9 })), NHOLE);
-  const starts = new InstancedMesh(discGeo, track(new MeshStandardMaterial({ roughness: 0.4, metalness: 0.5 })), 4);
-  holes.receiveShadow = true;
-  scene.add(starts, holes);
+  // Track inlay: a lighter leather ribbon that follows the snake path square by square (4-fold symmetric, built once).
+  {
+    const pos: number[] = [], idx: number[] = [];
+    const w = CELL * 0.34, y = BOARD_Y + 0.0015;
+    const pts = Array.from({ length: TRACK }, (_, i) => trackXZ(i, 0));
+    const quad = (a: [number, number], b: [number, number]) => {
+      const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1, nx = (-dz / l) * w, nz = (dx / l) * w;
+      const v = pos.length / 3;
+      pos.push(a[0] + nx, y, a[1] + nz, a[0] - nx, y, a[1] - nz, b[0] + nx, y, b[1] + nz, b[0] - nx, y, b[1] - nz);
+      idx.push(v, v + 2, v + 1, v + 1, v + 2, v + 3);
+    };
+    const disc = (c: [number, number]) => {
+      const v = pos.length / 3;
+      pos.push(c[0], y, c[1]);
+      for (let s = 0; s <= 12; s++) { const a = (s / 12) * Math.PI * 2; pos.push(c[0] + Math.cos(a) * w, y, c[1] + Math.sin(a) * w); }
+      for (let s = 0; s < 12; s++) idx.push(v, v + 2 + s, v + 1 + s);
+    };
+    for (let i = 0; i < TRACK; i++) { quad(pts[i] as [number, number], pts[(i + 1) % TRACK] as [number, number]); disc(pts[i] as [number, number]); }
+    const g = track(new BufferGeometry());
+    g.setAttribute('position', new Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new Float32BufferAttribute(pos.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+    g.setIndex(idx);
+    const ribbon = new Mesh(g, track(new MeshStandardMaterial({ color: 0x7a5530, roughness: 0.8, side: DoubleSide, polygonOffset: true, polygonOffsetFactor: -0.5, polygonOffsetUnits: -1 })));
+    ribbon.receiveShadow = true;
+    scene.add(ribbon);
+  }
+
   const dummy = new Object3D();
   const col = new Color();
+  const flatGeo = (g: BufferGeometry) => { g.rotateX(-Math.PI / 2); return track(g); };
+  // Holes: brass ring + dark core (track squares, home slots, base cups).
+  const CELLS = allCells();
+  const NHOLE = CELLS.length + 16;
+  const holeRing = new InstancedMesh(flatGeo(new RingGeometry(0.135, 0.19, 22)), track(new MeshStandardMaterial({ roughness: 0.35, metalness: 0.75 })), NHOLE);
+  const holeCore = new InstancedMesh(flatGeo(new CircleGeometry(0.136, 22)), track(new MeshStandardMaterial({ color: 0x140d08, roughness: 0.95 })), NHOLE);
+  const startRings = new InstancedMesh(flatGeo(new RingGeometry(0.22, 0.29, 26)), track(new MeshStandardMaterial({ roughness: 0.35, metalness: 0.6 })), 4);
+  const laneGeo = flatGeo(new PlaneGeometry(CELL * 0.62, CELL * 4.2));
+  const lanes = new InstancedMesh(laneGeo, track(new MeshStandardMaterial({ roughness: 0.7, transparent: true, opacity: 0.55 })), 4);
+  const trayShape = (() => {
+    const wdt = 4 * BASE_DX * CELL + 0.22, hgt = CELL * 1.25, r = hgt / 2, s = new Shape();
+    s.moveTo(-wdt / 2 + r, -hgt / 2); s.lineTo(wdt / 2 - r, -hgt / 2); s.absarc(wdt / 2 - r, 0, r, -Math.PI / 2, Math.PI / 2, false);
+    s.lineTo(-wdt / 2 + r, hgt / 2); s.absarc(-wdt / 2 + r, 0, r, Math.PI / 2, Math.PI * 1.5, false);
+    return s;
+  })();
+  const trays = new InstancedMesh(flatGeo(new ShapeGeometry(trayShape, 8)), track(new MeshStandardMaterial({ roughness: 0.4, metalness: 0.85 })), 4);
+  const stars = new InstancedMesh(flatGeo(new PlaneGeometry(CELL * 6.2, CELL * 6.2)), track(new MeshBasicMaterial({ map: star, transparent: true, depthWrite: false })), 4);
+  holeRing.receiveShadow = true; holeCore.receiveShadow = true; trays.receiveShadow = true;
+  // Decals lie a hair above the cloth: pull them toward the camera in depth so they never flicker at a distance.
+  [stars, lanes, trays, startRings, holeRing, holeCore].forEach((m, i) => {
+    const mt = m.material as Material;
+    mt.polygonOffset = true; mt.polygonOffsetFactor = -1 - i * 0.5; mt.polygonOffsetUnits = -2 - i * 2;
+  });
+  scene.add(stars, lanes, trays, startRings, holeRing, holeCore);
 
   function layoutBoard() {
     let n = 0;
     const put = (x: number, z: number, r: number, color: number) => {
-      dummy.position.set(x, BOARD_Y + 0.004, z); dummy.scale.set(r, 1, r); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
-      holes.setMatrixAt(n, dummy.matrix); holes.setColorAt(n, col.setHex(color)); n++;
+      dummy.rotation.set(0, 0, 0); dummy.scale.set(r, 1, r);
+      dummy.position.set(x, BOARD_Y + 0.004, z); dummy.updateMatrix(); holeRing.setMatrixAt(n, dummy.matrix); holeRing.setColorAt(n, col.setHex(color));
+      dummy.position.set(x, BOARD_Y + 0.0035, z); dummy.updateMatrix(); holeCore.setMatrixAt(n, dummy.matrix);
+      n++;
     };
     for (const c of CELLS) {
       const [x, z] = posToXZ(c, viewSeat);
-      put(x, z, c.zone === 'home' ? 0.19 : 0.14, c.zone === 'home' ? SEAT_COLORS[c.seat] as number : C.felt700);
+      put(x, z, c.zone === 'home' ? 1.12 : 1, c.zone === 'home' ? SEAT_COLORS[c.seat] as number : C.brass700);
     }
     for (let s = 0; s < 4; s++) for (let j = 0; j < 4; j++) {
       const [x, z] = posToXZ({ zone: 'base', seat: s, slot: j }, viewSeat);
-      put(x, z, 0.26, SEAT_COLORS[s] as number);
+      put(x, z, 1.22, SEAT_COLORS[s] as number);
     }
-    holes.instanceMatrix.needsUpdate = true;
-    if (holes.instanceColor) holes.instanceColor.needsUpdate = true;
+    for (const m of [holeRing, holeCore]) m.instanceMatrix.needsUpdate = true;
+    if (holeRing.instanceColor) holeRing.instanceColor.needsUpdate = true;
     for (let s = 0; s < 4; s++) {
-      const [x, z] = posToXZ({ zone: 'track', index: s * 19 }, viewSeat);
-      dummy.position.set(x, BOARD_Y + 0.002, z); dummy.scale.set(0.27, 1, 0.27); dummy.updateMatrix();
-      starts.setMatrixAt(s, dummy.matrix); starts.setColorAt(s, col.setHex(SEAT_COLORS[s] as number));
+      const k = screenPos(s, viewSeat);
+      const [x, z] = posToXZ({ zone: 'track', index: s * PER }, viewSeat);
+      dummy.position.set(x, BOARD_Y + 0.0025, z); dummy.scale.set(1, 1, 1); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
+      startRings.setMatrixAt(s, dummy.matrix); startRings.setColorAt(s, col.setHex(SEAT_COLORS[s] as number));
+      const [h0x, h0z] = localHome(0), [h3x, h3z] = localHome(3);
+      const [lx, lz] = rot((h0x + h3x) / 2, (h0z + h3z) / 2 + CELL * 0.5, k);
+      dummy.position.set(lx, BOARD_Y + 0.002, lz); dummy.rotation.set(0, (k * Math.PI) / 2, 0); dummy.updateMatrix();
+      lanes.setMatrixAt(s, dummy.matrix); lanes.setColorAt(s, col.setHex(SEAT_COLORS[s] as number).multiplyScalar(0.75));
+      const [tx, tz] = rot(0, BASE_Z * CELL, k);
+      dummy.position.set(tx, BOARD_Y + 0.0018, tz); dummy.updateMatrix();
+      trays.setMatrixAt(s, dummy.matrix); trays.setColorAt(s, col.setHex(C.brass500).lerp(new Color(SEAT_COLORS[s] as number), 0.15));
+      const [sx, sz] = rot(8 * CELL, 8 * CELL, s);
+      dummy.position.set(sx, BOARD_Y + 0.0012, sz); dummy.rotation.set(0, (s * Math.PI) / 2 + Math.PI / 4, 0); dummy.updateMatrix();
+      stars.setMatrixAt(s, dummy.matrix);
     }
-    starts.instanceMatrix.needsUpdate = true;
-    if (starts.instanceColor) starts.instanceColor.needsUpdate = true;
+    for (const m of [startRings, lanes, trays, stars]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
   }
 
-  // ---------- marbles (glass look, one InstancedMesh, 16) ----------
-  const marbleGeo = track(new SphereGeometry(MARBLE_R, 28, 18));
-  const marbleMat = track(new MeshPhysicalMaterial({
+  // ---------- marbles: clear glass shell + coloured swirl core (high), solid glossy glass (low) ----------
+  const shellGeo = track(new SphereGeometry(MARBLE_R, 28, 18));
+  const coreGeo = track(new SphereGeometry(MARBLE_R * 0.74, 20, 14));
+  const solidMat = track(new MeshPhysicalMaterial({
     roughness: 0.05, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03, ior: 1.5, envMapIntensity: 1.2,
     normalMap: swirl, normalScale: new Vector2(0.5, 0.5),
   }));
-  const marbles = new InstancedMesh(marbleGeo, marbleMat, 16);
-  marbles.castShadow = true;
+  const shellMat = track(new MeshPhysicalMaterial({
+    roughness: 0.02, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.02, ior: 1.5, envMapIntensity: 1.7,
+    transparent: true, opacity: 0.42, depthWrite: false, specularIntensity: 1,
+  }));
+  const coreMat = track(new MeshStandardMaterial({ roughness: 0.32, metalness: 0.05, normalMap: swirl, normalScale: new Vector2(1.1, 1.1), envMapIntensity: 0.9 }));
+  const marbles = new InstancedMesh(shellGeo, solidMat, 16);
+  const cores = new InstancedMesh(coreGeo, coreMat, 16);
+  marbles.castShadow = true; cores.castShadow = false;
+  marbles.renderOrder = 3; cores.renderOrder = 2;
   const mirrorMat = track(new MeshBasicMaterial({ transparent: true, opacity: 0.13, depthTest: false, depthWrite: false, side: DoubleSide }));
-  const mirror = new InstancedMesh(marbleGeo, mirrorMat, 16);
-  mirror.renderOrder = 3; mirror.frustumCulled = false;
-  const blobGeo = track(new CircleGeometry(MARBLE_R * 1.25, 16)); blobGeo.rotateX(-Math.PI / 2);
-  const blobs = new InstancedMesh(blobGeo, track(new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.9, map: soft, depthWrite: false })), 16);
-  blobs.renderOrder = 2;
-  scene.add(marbles, mirror, blobs);
+  const mirror = new InstancedMesh(shellGeo, mirrorMat, 16);
+  mirror.renderOrder = 1; mirror.frustumCulled = false;
+  const blobGeo = flatGeo(new CircleGeometry(MARBLE_R * 1.25, 16));
+  const blobs = new InstancedMesh(blobGeo, track(new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.85, map: soft, depthWrite: false })), 16);
+  blobs.renderOrder = 1;
+  // Light focused through the glass: a faint coloured spot beside each marble (high quality only).
+  const caustics = new InstancedMesh(flatGeo(new CircleGeometry(MARBLE_R * 0.9, 14)), track(new MeshBasicMaterial({ map: soft, transparent: true, opacity: 0.45, depthWrite: false, blending: AdditiveBlending })), 16);
+  caustics.renderOrder = 1;
+  scene.add(marbles, cores, mirror, blobs, caustics);
   const mp: MarblePos[] = [];
   const mx = new Float32Array(16), my = new Float32Array(16), mz = new Float32Array(16), msy = new Float32Array(16).fill(1);
   for (let i = 0; i < 16; i++) {
     mp.push({ zone: 'base', seat: i >> 2, slot: i & 3 });
-    marbles.setColorAt(i, col.setHex(SEAT_COLORS[i >> 2] as number));
-    mirror.setColorAt(i, col.setHex(SEAT_COLORS[i >> 2] as number).multiplyScalar(0.7));
+    const sc = SEAT_COLORS[i >> 2] as number;
+    marbles.setColorAt(i, col.setHex(sc));
+    cores.setColorAt(i, col.setHex(sc));
+    mirror.setColorAt(i, col.setHex(sc).multiplyScalar(0.7));
+    caustics.setColorAt(i, col.setHex(sc).multiplyScalar(0.9));
   }
   function writeMarble(i: number) {
     const sy = msy[i] as number, sx = 1 + (1 - sy) * 0.5;
@@ -234,58 +314,84 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     dummy.position.set(x, y - MARBLE_R * (1 - sy), z);
     dummy.scale.set(sx, sy, sx); dummy.updateMatrix();
     marbles.setMatrixAt(i, dummy.matrix);
+    dummy.rotation.set(0.6, i * 1.7, 0.3); dummy.updateMatrix(); // each core shows a different swirl
+    cores.setMatrixAt(i, dummy.matrix);
+    dummy.rotation.set(0, 0, 0);
     const h = Math.max(0, y - REST_Y), s = 1 / (1 + h * 1.5);
     dummy.position.set(x, BOARD_Y + 0.006, z); dummy.scale.set(s, 1, s); dummy.updateMatrix();
     blobs.setMatrixAt(i, dummy.matrix);
-    // mirrored copy under the felt plane
+    const len = Math.hypot(x, z) || 1;
+    dummy.position.set(x + (x / len) * MARBLE_R * 0.75, BOARD_Y + 0.007, z + (z / len) * MARBLE_R * 0.75); dummy.scale.set(s, 1, s * 1.3);
+    dummy.rotation.set(0, Math.atan2(x, z), 0); dummy.updateMatrix();
+    caustics.setMatrixAt(i, dummy.matrix);
+    dummy.rotation.set(0, 0, 0);
+    // mirrored copy under the board plane
     dummy.position.set(x, 2 * (BOARD_Y + 0.002) - (y - MARBLE_R * (1 - sy)), z); dummy.scale.set(sx, -sy, sx); dummy.updateMatrix();
     mirror.setMatrixAt(i, dummy.matrix);
-    marbles.instanceMatrix.needsUpdate = true; blobs.instanceMatrix.needsUpdate = true; mirror.instanceMatrix.needsUpdate = true;
+    for (const m of [marbles, cores, blobs, mirror, caustics]) m.instanceMatrix.needsUpdate = true;
   }
   function snapMarble(i: number) {
     const [x, z] = posToXZ(mp[i] as MarblePos, viewSeat);
     mx[i] = x; mz[i] = z; my[i] = REST_Y; msy[i] = 1; writeMarble(i);
   }
   function snapAllMarbles() { for (let i = 0; i < 16; i++) snapMarble(i); }
-  if (marbles.instanceColor) marbles.instanceColor.needsUpdate = true;
-  if (mirror.instanceColor) mirror.instanceColor.needsUpdate = true;
+  for (const m of [marbles, cores, mirror, caustics]) if (m.instanceColor) m.instanceColor.needsUpdate = true;
+  const ghostMat = track(new MeshPhysicalMaterial({ transparent: true, opacity: 0.5, roughness: 0.1, clearcoat: 1, depthWrite: false }));
+  const ghost = new Mesh(shellGeo, ghostMat); ghost.visible = false; ghost.renderOrder = 4;
+  scene.add(ghost);
 
-  // ---------- avatars ----------
+  // ---------- avatars + pirate ----------
   const avatars: Avatar[] = [0, 1, 2, 3].map((s) => { const a = createAvatar(s); scene.add(a.root); return a; });
   for (const a of avatars) disposables.push(a);
+  const npc = createNpc();
+  npc.root.position.set(NPC_POS[0], 0, NPC_POS[1]);
+  npc.root.rotation.y = Math.atan2(-NPC_POS[0], -NPC_POS[1]);
+  scene.add(npc.root);
+  disposables.push(npc);
 
-  // ---------- overlays (selection / hints) ----------
+  // ---------- overlays (selection / hints / targets) ----------
   const tex = {
     selCircle: track(outlineTexture('circle', false, CSS.brass300)),
-    hintCircle: track(outlineTexture('circle', true, CSS.ok500)),
+    hintCircle: track(outlineTexture('circle', true, CSS.cream50)),
     selRect: track(outlineTexture('rect', false, CSS.brass300)),
-    hintRect: track(outlineTexture('rect', true, CSS.ok500)),
+    hintRect: track(outlineTexture('rect', true, CSS.cream50)),
   };
   const mat = (t: Texture) => track(new MeshBasicMaterial({ map: t, transparent: true, depthWrite: false }));
   const ringMats = { sel: mat(tex.selCircle), hint: mat(tex.hintCircle) };
   const outlineMats = { sel: mat(tex.selRect), hint: mat(tex.hintRect) };
-  const ringGeo = track(new PlaneGeometry(0.7, 0.7)); ringGeo.rotateX(-Math.PI / 2);
+  const ringGeo = flatGeo(new PlaneGeometry(0.66, 0.66));
   const rings: Mesh[] = [];
   let ringsUsed = 0;
-  function ring(kind: 'sel' | 'hint', x: number, z: number, y = BOARD_Y + 0.03) {
+  function ring(kind: 'sel' | 'hint', x: number, z: number, scale = 1) {
     let m = rings[ringsUsed];
     if (!m) { m = new Mesh(ringGeo, ringMats.sel); m.renderOrder = 5; scene.add(m); rings.push(m); }
-    m.material = ringMats[kind]; m.position.set(x, y, z); m.scale.setScalar(kind === 'sel' ? 1.12 : 1);
+    m.material = ringMats[kind]; m.position.set(x, BOARD_Y + 0.03, z); m.scale.setScalar(scale * (kind === 'sel' ? 1.12 : 1));
     m.visible = true; ringsUsed++;
   }
+  let snapCell: MarblePos | null = null;
   function refreshOverlays() {
     ringsUsed = 0;
-    if (sel.marbleId !== null) ring('sel', mx[sel.marbleId] as number, mz[sel.marbleId] as number);
-    for (const id of hints?.marbleIds ?? []) if (id >= 0 && id < 16) ring('hint', mx[id] as number, mz[id] as number);
-    for (const c of hints?.cells ?? []) { const [x, z] = posToXZ(c, viewSeat); ring('hint', x, z); }
+    const selM = targets?.selected ?? sel.marbleId;
+    if (selM !== null && selM !== undefined) ring('sel', mx[selM] as number, mz[selM] as number);
+    for (const id of targets?.marbles ?? hints?.marbleIds ?? []) if (id >= 0 && id < 16 && id !== selM) ring('hint', mx[id] as number, mz[id] as number);
+    for (const c of targets?.cells ?? hints?.cells ?? []) {
+      const [x, z] = posToXZ(c, viewSeat);
+      const chosen = samePos(c, targets?.chosen) || samePos(c, snapCell);
+      ring(chosen ? 'sel' : 'hint', x, z, chosen ? 1.15 : 1);
+    }
     for (let i = ringsUsed; i < rings.length; i++) (rings[i] as Mesh).visible = false;
+    const gOf = targets?.chosen ? targets.selected ?? null : null;
+    if (gOf !== null && targets?.chosen) {
+      const [gx, gz] = posToXZ(targets.chosen, viewSeat);
+      ghost.position.set(gx, REST_Y, gz); ghostMat.color.setHex(SEAT_COLORS[gOf >> 2] as number); ghost.visible = true;
+    } else ghost.visible = false;
     for (const list of hands) for (const c of list) {
       const s = c.id === sel.cardId, h = !s && !!hints?.cardIds?.includes(c.id);
       c.outline.visible = s || h;
       if (s || h) c.outline.material = outlineMats[s ? 'sel' : 'hint'];
     }
     relayoutHand(viewSeat, 150);
-    request();
+    request(true);
   }
 
   // ---------- cards ----------
@@ -306,7 +412,6 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   const pool: CardObj[] = [];
   const hands: CardObj[][] = [[], [], [], []];
   const tableCards: (CardObj | null)[] = [null, null, null, null];
-  const meshToCard = new Map<Mesh, CardObj>();
 
   function applyScale(c: CardObj) { c.mesh.scale.set(c.sc * c.fx, c.sc, c.sc); }
   function setPose(c: CardObj, p: Pose) {
@@ -319,11 +424,11 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     if (!c) {
       const mesh = new Mesh(geoFor(null), cardMat);
       mesh.rotation.order = 'YXZ';
+      mesh.castShadow = true;
       const outline = new Mesh(outlineGeo, outlineMats.sel);
       outline.position.z = -0.006; outline.visible = false; outline.renderOrder = 4;
       mesh.add(outline);
       c = { mesh, outline, id, face, pose, sc: 1, fx: 1 };
-      meshToCard.set(mesh, c);
     }
     c.id = id; c.face = face; c.mesh.geometry = geoFor(face);
     c.sc = 1; c.fx = 1; applyScale(c); c.mesh.visible = true; c.outline.visible = false;
@@ -352,7 +457,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   }
   function moveCard(c: CardObj, to: Pose, dur: number, o: { delay?: number; arc?: number; sfxName?: SfxName; sc?: number } = {}): Promise<void> {
     const toSc = o.sc ?? c.sc;
-    if (reduced() || dur <= 0) { setPose(c, to); c.sc = toSc; applyScale(c); c.mesh.visible = true; request(); return Promise.resolve(); }
+    if (reduced() || dur <= 0) { setPose(c, to); c.sc = toSc; applyScale(c); c.mesh.visible = true; request(true); return Promise.resolve(); }
     const from = { ...c.pose }, fromSc = c.sc;
     let fired = false;
     return tweens.add(dur, (t) => {
@@ -365,7 +470,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     }, { delay: o.delay, ease: easeOut });
   }
   function flipTo(c: CardObj, face: CardRef | null, dur = 200): Promise<void> {
-    if (reduced()) { setFace(c, face); request(); return Promise.resolve(); }
+    if (reduced()) { setFace(c, face); request(true); return Promise.resolve(); }
     let swapped = false;
     return tweens.add(dur, (t) => {
       if (t < 0.5) c.fx = Math.max(0.001, 1 - 2 * t);
@@ -385,22 +490,24 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     (avatars[seat] as Avatar).setHands(a.l, rightOverride ?? a.r);
     request();
   }
+  const pilePose = (seat: number, id: string): Pose => tablePose(k(seat), cardJitter(id));
 
   // ---------- deck + turn marker ----------
   const deckBox = new Mesh(track(new BoxGeometry(CARD_W, 0.12, CARD_H)), track(new MeshStandardMaterial({ color: C.cream200, roughness: 0.7 })));
   const deckTop = new Mesh(geoFor(null), cardMat); deckTop.rotation.x = -Math.PI / 2;
   const deckGroup = new Object3D(); deckGroup.add(deckBox, deckTop); deckBox.position.y = 0.06; deckTop.position.y = 0.125;
+  deckBox.castShadow = true;
   scene.add(deckGroup);
   function placeSeats() {
     for (let s = 0; s < 4; s++) (avatars[s] as Avatar).root.rotation.y = (k(s) * Math.PI) / 2;
     const d = deckPose(k(dealer));
-    deckGroup.position.set(d.x, 0, d.z); deckGroup.rotation.y = d.ry;
+    deckGroup.position.set(d.x, 0, d.z); deckGroup.rotation.y = d.ry + d.rz;
   }
-  const turnMark = new Mesh(track(new BoxGeometry(2.2, 0.05, 0.1)), track(new MeshBasicMaterial({ color: C.brass300 })));
+  const turnMark = new Mesh(track(new BoxGeometry(2.4, 0.05, 0.12)), track(new MeshBasicMaterial({ color: C.brass300 })));
   scene.add(turnMark);
   function placeTurn() {
     const kk = k(turn);
-    const [x, z] = rot(0, 6.0, kk);
+    const [x, z] = rot(0, FRAME_HALF + 0.32, kk);
     turnMark.position.set(x, 0.03, z); turnMark.rotation.y = (kk * Math.PI) / 2;
   }
 
@@ -434,38 +541,75 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     }, { ease: easeOut });
   }
 
-  // ---------- camera ----------
-  let camYaw = 0, camDrift = 0, camDist = 30, camEl = rad(48);
+  // ---------- orbit camera (per player: drag rotates around the table, pinch/wheel zooms, double tap resets) ----------
+  const cam = { yaw: 0, pitch: rad(52), zoom: 1 };
+  const goal = { yaw: 0, pitch: rad(52), zoom: 1 };
+  let defPitch = rad(52), baseDist = 30, camMovedFlag = false;
   function poseCamera() {
-    const yaw = camYaw + camDrift;
-    const hz = camDist * Math.cos(camEl);
-    camera.position.set(Math.sin(yaw) * hz, camDist * Math.sin(camEl), Math.cos(yaw) * hz);
+    const d = baseDist * cam.zoom, hz = d * Math.cos(cam.pitch);
+    camera.position.set(Math.sin(cam.yaw) * hz, d * Math.sin(cam.pitch), Math.cos(cam.yaw) * hz);
     camera.lookAt(0, 0, 0);
     camera.updateMatrixWorld();
+  }
+  /** Damped step toward the goal (time-based: same feel at 60 and 120 Hz). Returns true while moving. */
+  function stepCamera(dt: number): boolean {
+    const f = reduced() ? 1 : 1 - Math.exp(-dt / DAMP_S);
+    let moving = false;
+    for (const key of ['yaw', 'pitch', 'zoom'] as const) {
+      const d = goal[key] - cam[key];
+      if (Math.abs(d) > 1e-4) { cam[key] += d * f; moving = true; } else cam[key] = goal[key];
+    }
+    if (moving) poseCamera();
+    const moved = Math.abs(Math.atan2(Math.sin(goal.yaw), Math.cos(goal.yaw))) > 0.04 || Math.abs(goal.pitch - defPitch) > 0.03 || Math.abs(goal.zoom - 1) > 0.03;
+    if (moved !== camMovedFlag) { camMovedFlag = moved; ev.onCamera?.(moved); }
+    return moving;
+  }
+  function fitDistance(el: number, tv: number, th: number): number {
+    const su = Math.sin(el), cu = Math.cos(el);
+    let D = 0;
+    const pts = framePoints();
+    // own hand (phone fan held up / laptop cards in front) must stay on screen too
+    if (!spectator) for (const sx of [-1, 1]) pts.push(mode.phone ? [sx * 1.9, 3.1, 7.5] : [sx * 1.7, 1.3, 7.0]);
+    for (const [x, y, z] of pts) {
+      const pu = y * su + z * cu, pv = y * cu - z * su;
+      D = Math.max(D, pu + Math.abs(x) / th, pu + Math.abs(pv) / tv);
+    }
+    return D;
   }
   function frameCamera() {
     const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
     const landscape = w > h;
-    camera.fov = landscape ? 30 : 32;
-    camEl = rad(landscape ? 40 : 48);
-    const m: HandMode = { phone: !!coarse?.matches, el: camEl };
-    if (m.phone !== mode.phone || Math.abs(m.el - mode.el) > 1e-6) { mode = m; if (lastView) { for (let s = 0; s < 4; s++) { const list = hands[s] as CardObj[]; list.forEach((c, i) => { const sp = slotPose(s, i, list.length); setPose(c, sp.p); c.sc = sp.sc; applyScale(c); }); updateArms(s); } } }
+    camera.fov = landscape ? 30 : 34;
+    const el = rad(landscape ? 42 : w / h < 0.6 ? 55 : 50);
+    const m: HandMode = { phone: !!coarse?.matches, el };
+    if (m.phone !== mode.phone || Math.abs(m.el - mode.el) > 1e-6) {
+      mode = m;
+      if (lastView) for (let s = 0; s < 4; s++) { const list = hands[s] as CardObj[]; list.forEach((c, i) => { const sp = slotPose(s, i, list.length); setPose(c, sp.p); c.sc = sp.sc; applyScale(c); }); updateArms(s); }
+    }
+    if (Math.abs(el - defPitch) > 1e-6) {
+      const delta = el - defPitch; defPitch = el;
+      goal.pitch = clamp(goal.pitch + delta, PITCH_MIN, PITCH_MAX); cam.pitch = clamp(cam.pitch + delta, PITCH_MIN, PITCH_MAX);
+    }
     const effH = Math.max(80, h - insetTop - insetBottom);
-    const tv = Math.tan(rad(camera.fov / 2)), th = tv * (w / h);
-    const Hx = landscape ? 8.2 : 6.3;
-    const Hv = landscape ? 7.4 * Math.sin(camEl) + 1.8 : 9.5 * Math.sin(camEl) + 2.2;
-    camDist = (Math.max(Hx / th, Hv / (tv * (effH / h))) * 1.04) / zoom;
+    const tv = Math.tan(rad(camera.fov / 2)) * (effH / h) * 0.97;
+    const th = Math.tan(rad(camera.fov / 2)) * (w / h) * 0.95;
+    baseDist = fitDistance(el, tv, th) * 1.01;
     camera.aspect = w / h;
     camera.setViewOffset(w, h, 0, (insetBottom - insetTop) / 2, w, h);
     camera.updateProjectionMatrix();
     poseCamera();
   }
-  let camZoomTarget = 1;
   function setZoom(z: number, animated = true) {
-    const to = Math.min(2, Math.max(0.6, z)); camZoomTarget = to;
-    if (!animated || reduced()) { zoom = to; frameCamera(); request(); return; }
-    const from = zoom;
-    void tweens.add(250, (t) => { zoom = lerp(from, camZoomTarget, t); frameCamera(); }, { ease: easeInOut });
+    goal.zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
+    if (!animated || reduced()) cam.zoom = goal.zoom;
+    poseCamera(); request();
+  }
+  function resetCamera(animated = true) {
+    // shortest way back to the seat view
+    const turns = Math.round(goal.yaw / (Math.PI * 2));
+    goal.yaw = turns * Math.PI * 2; goal.pitch = defPitch; goal.zoom = 1;
+    if (!animated || reduced()) { cam.yaw = goal.yaw; cam.pitch = goal.pitch; cam.zoom = goal.zoom; }
+    poseCamera(); request();
   }
 
   function resize() {
@@ -481,12 +625,16 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     cafe.steam.sprites.forEach((s) => { s.visible = steamOn(); });
     cafe.highOnly.forEach((o) => { if (!(o as { isSprite?: boolean }).isSprite) o.visible = hi; });
     mirror.visible = mirrorOn();
+    caustics.visible = hi && degrade < 2;
+    // High: clear shell over a coloured swirl core. Low: one solid glossy sphere (fewer draw calls).
+    marbles.material = hi ? shellMat : solidMat; cores.visible = hi;
     const size = shadowSize();
     if (lamp.shadow.mapSize.x !== size) { lamp.shadow.mapSize.set(size, size); lamp.shadow.map?.dispose(); lamp.shadow.map = null; }
-    woodMat.clearcoat = hi ? 0.25 : 0; feltMat.sheen = hi ? 0.6 : 0;
+    woodMat.clearcoat = hi ? 0.25 : 0; feltMat.sheen = hi ? 0.5 : 0;
     cafe.tableMat.clearcoat = hi ? 0.25 : 0;
     scene.environmentIntensity = hi ? 0.5 : 0.4;
     cafe.setShadows(hi); for (const a of avatars) a.castShadows(hi);
+    npc.setDetail(hi); npc.castShadows(false);
     marbles.castShadow = true;
     resize();
   }
@@ -496,10 +644,10 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     if (reason === 'user') degrade = 0;
     try { localStorage.setItem(GFX_KEY, q); } catch { /* private mode */ }
     if (changedTex) {
-      const sz = q === 'high' ? 1024 : 512;
+      const sz = texSize(q);
       const nw = woodMaps(sz), nf = feltMaps(sz);
       const na = buildAtlas(renderer.capabilities.getMaxAnisotropy(), q === 'high' ? 2048 : 1024);
-      const ne = buildEnvironment(renderer, q === 'high' ? 256 : 64);
+      const ne = buildEnvironment(renderer, q === 'high' ? (small ? 128 : 256) : 64);
       woodMat.map = nw.map; woodMat.bumpMap = nw.bump; cafe.tableMat.map = nw.map; cafe.tableMat.bumpMap = nw.bump;
       feltMat.map = nf.map; feltMat.bumpMap = nf.bump; cardMat.map = na;
       scene.environment = ne;
@@ -532,7 +680,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       }
       hands[s] = list;
       const t = v.table[s];
-      if (t) tableCards[s] = makeCard(t, t.id, tablePose(k(s), 0));
+      if (t) { const c = makeCard(t, t.id, pilePose(s, t.id)); c.sc = TABLE_CARD_SCALE; applyScale(c); tableCards[s] = c; }
       updateArms(s);
     }
   }
@@ -554,7 +702,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     for (let r = 0; r < maxN; r++) for (let o = 1; o <= 4; o++) { const seat = (dealer + o) % 4; if (r < (hands[seat] as CardObj[]).length) order.push({ seat, i: r }); }
     if (reduced()) {
       for (let s = 0; s < 4; s++) if (isOwn(s)) (hands[s] as CardObj[]).forEach((c, i) => setFace(c, v.hand[i] as CardRef));
-      request(); return;
+      request(true); return;
     }
     dealing = true;
     const stagger = Math.min(90, 1500 / Math.max(1, order.length));
@@ -574,62 +722,69 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     const rest = handAnchors(isOwn(dealer), mode, (hands[dealer] as CardObj[]).length).r;
     jobs.push(tweens.add(total, (t) => {
       const f = t >= 1 ? 0 : Math.max(0, Math.sin(t * order.length * Math.PI));
-      updateArms(dealer, [lerp(rest[0], 3.0, f), lerp(rest[1], 0.9, f), lerp(rest[2], 6.2, f)]);
+      updateArms(dealer, [lerp(rest[0], 3.0, f), lerp(rest[1], 0.9, f), lerp(rest[2], 7.2, f)]);
     }, { ease: linear }));
-    request();
+    request(true);
     await Promise.all(jobs);
     if (ep === epoch) { dealing = false; refreshOverlays(); }
+  }
+
+  /** The card flies from the seat's hand to that seat's spot in the centre pile; the previous one is covered. */
+  async function playThrow(seat: number, card: CardRef): Promise<void> {
+    if (seat < 0 || seat > 3) return;
+    const list = hands[seat] as CardObj[];
+    let idx = list.findIndex((c) => c.id === card.id);
+    if (idx < 0 && !isOwn(seat)) idx = list.length - 1;
+    const c = idx >= 0 ? (list.splice(idx, 1)[0] as CardObj) : makeCard(null, card.id, handPose(k(seat), 0, 1, isOwn(seat), mode));
+    const old = tableCards[seat];
+    tableCards[seat] = c; c.id = card.id; c.outline.visible = false;
+    if (peekId === card.id) peekId = null;
+    if (sel.cardId === card.id) sel = { cardId: null, marbleId: null };
+    const to = pilePose(seat, card.id);
+    const jobs: Promise<void>[] = [];
+    if (c.face?.id !== card.id) jobs.push(flipTo(c, card, 160));
+    jobs.push(moveCard(c, { ...to, y: to.y + 0.004 }, 320, { arc: 0.5, sfxName: 'throw', sc: TABLE_CARD_SCALE }));
+    relayoutHand(seat, 200);
+    await Promise.all(jobs);
+    if (old && old !== c) releaseCard(old);
+    setPose(c, to);
+    request(true);
   }
 
   async function playMove(m: MoveEvent): Promise<void> {
     const ep = epoch;
     const alive = () => ep === epoch && !disposed;
-    const jobs: Promise<void>[] = [];
-    if (m.card) {
-      const card = m.card;
-      const list = hands[m.seat] as CardObj[];
-      let idx = list.findIndex((c) => c.id === card.id);
-      if (idx < 0) idx = list.length - 1;
-      const c = idx >= 0 ? (list.splice(idx, 1)[0] as CardObj) : makeCard(card, card.id, deckPose(k(m.seat)));
-      const old = tableCards[m.seat]; if (old) releaseCard(old);
-      tableCards[m.seat] = c; c.id = card.id;
-      c.outline.visible = false;
-      if (peekId === card.id) peekId = null;
-      const jitter = rad((Math.random() * 2 - 1) * 6);
-      if (c.face?.id !== card.id) jobs.push(flipTo(c, card, 160));
-      jobs.push(moveCard(c, tablePose(k(m.seat), jitter), 300, { arc: 0.4, sfxName: 'throw', sc: 1 }));
-      relayoutHand(m.seat, 200);
-      if (!reduced()) await new Promise<void>((r) => { void tweens.add(180, () => {}, { ease: linear }).then(r); });
-    }
+    if (m.card) await playThrow(m.seat, m.card);
     if (!alive()) return;
+    const jobs: Promise<void>[] = [];
     if (m.path.length > 1) jobs.push(hopMarble(m.marbleId, m.path, alive));
-    else if (m.swapWith === undefined) request();
     if (m.swapWith !== undefined) {
       const a = m.marbleId, b = m.swapWith;
       const pa = mp[a] as MarblePos, pb = mp[b] as MarblePos;
-      jobs.push(arcMarble(a, pb, 300, 0.7), arcMarble(b, pa, 300, 0.7));
+      jobs.length = 0;
+      jobs.push(arcMarble(a, pb, 320, 0.8), arcMarble(b, pa, 320, 0.8));
     }
+    if (!jobs.length) request(true);
     await Promise.all(jobs);
     if (!alive()) return;
     if (m.captured?.length) {
       const last = m.path[m.path.length - 1];
       const [bx, bz] = last ? posToXZ(last, viewSeat) : [0, 0];
       sfx('capture');
-      jobs.length = 0;
-      jobs.push(burst(bx, bz));
-      for (const cp of m.captured) jobs.push(arcMarble(cp.marbleId, cp.to, 250, 0.5, 120));
-      await Promise.all(jobs);
+      const cj: Promise<void>[] = [burst(bx, bz)];
+      for (const cp of m.captured) cj.push(arcMarble(cp.marbleId, cp.to, 300, 0.7, 120));
+      await Promise.all(cj);
     }
     if (alive()) refreshOverlays();
   }
 
   function arcMarble(id: number, to: MarblePos, dur: number, arc: number, delay = 0): Promise<void> {
     const [tx, tz] = posToXZ(to, viewSeat);
-    const fx = mx[id] as number, fz = mz[id] as number;
+    const fx = mx[id] as number, fz = mz[id] as number, fy = my[id] as number;
     mp[id] = to;
-    if (reduced()) { mx[id] = tx; mz[id] = tz; my[id] = REST_Y; writeMarble(id); request(); return Promise.resolve(); }
+    if (reduced()) { mx[id] = tx; mz[id] = tz; my[id] = REST_Y; writeMarble(id); request(true); return Promise.resolve(); }
     return tweens.add(dur, (t) => {
-      mx[id] = lerp(fx, tx, t); mz[id] = lerp(fz, tz, t); my[id] = REST_Y + arc * Math.sin(Math.PI * t); writeMarble(id);
+      mx[id] = lerp(fx, tx, t); mz[id] = lerp(fz, tz, t); my[id] = lerp(fy, REST_Y, t) + arc * Math.sin(Math.PI * t); writeMarble(id);
     }, { ease: easeInOut, delay });
   }
 
@@ -642,7 +797,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       mx[id] = ex; mz[id] = ez; my[id] = REST_Y; writeMarble(id);
       await burstFlashOnly(ex, ez); return;
     }
-    const per = Math.min(60, 400 / n);
+    const per = Math.min(90, 520 / n);
     let last = -1;
     await tweens.add(per * n, (t) => {
       const f = Math.min(n - 0.0001, t * n), s = Math.floor(f), l = easeInOut(f - s);
@@ -650,12 +805,12 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       const a = pts[s] as [number, number], b = pts[s + 1] as [number, number];
       const dist = Math.hypot(b[0] - a[0], b[1] - a[1]);
       mx[id] = lerp(a[0], b[0], l); mz[id] = lerp(a[1], b[1], l);
-      my[id] = REST_Y + (0.2 + Math.min(0.7, dist * 0.08)) * Math.sin(Math.PI * l);
+      my[id] = REST_Y + (0.16 + Math.min(0.8, dist * 0.22)) * Math.sin(Math.PI * l);
       if (s !== last) { last = s; sfx('hop'); }
       writeMarble(id);
     }, { ease: linear });
     if (!alive()) return;
-    await tweens.add(80, (t) => { msy[id] = 0.9 + 0.1 * t; writeMarble(id); }, { ease: easeOut });
+    await tweens.add(90, (t) => { msy[id] = 0.88 + 0.12 * t; writeMarble(id); }, { ease: easeOut });
   }
   function burstFlashOnly(x: number, z: number): Promise<void> {
     flash.position.set(x, BOARD_Y + 0.05, z); flash.visible = true;
@@ -667,6 +822,12 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   const ray = new Raycaster();
   const v3 = new Vector3();
   const ndc = new Vector2();
+  const boardPlane = new Plane(new Vector3(0, 1, 0), -BOARD_Y);
+  const rectNow = () => canvas.getBoundingClientRect();
+  const screenOf = (x: number, y: number, z: number, rect: DOMRect): [number, number, boolean] => {
+    v3.set(x, y, z).project(camera);
+    return [(v3.x * 0.5 + 0.5) * rect.width, (-v3.y * 0.5 + 0.5) * rect.height, v3.z < 1];
+  };
   /** Nearest own hand card to a screen point (cards are small on phones, so use a generous slop instead of exact hits). */
   function nearestOwnCard(px: number, py: number, rect: DOMRect, slop: number): CardObj | null {
     if (spectator) return null;
@@ -680,64 +841,203 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     }
     let best: CardObj | null = null, bd = slop;
     for (const c of own) {
-      v3.copy(c.mesh.position).project(camera);
-      const d = Math.hypot((v3.x * 0.5 + 0.5) * rect.width - px, (-v3.y * 0.5 + 0.5) * rect.height - py);
+      const [sx, sy] = screenOf(c.mesh.position.x, c.mesh.position.y, c.mesh.position.z, rect);
+      const d = Math.hypot(sx - px, sy - py);
       if (d < bd) { bd = d; best = c; }
     }
     return best;
   }
-  function pick(cx: number, cy: number) {
-    const rect = canvas.getBoundingClientRect();
-    if (dealing) { tweens.finishAll(); dealing = false; return; }
-    if (!interactive) return;
-    const px = cx - rect.left, py = cy - rect.top;
-    const card = nearestOwnCard(px, py, rect, 34);
-    if (card) { peekId = card.id; relayoutHand(viewSeat, 160); ev.onPickCard?.(card.id); return; }
-    const near = (x: number, y: number, z: number) => {
-      v3.set(x, y, z).project(camera);
-      return Math.hypot((v3.x * 0.5 + 0.5) * rect.width - px, (-v3.y * 0.5 + 0.5) * rect.height - py);
-    };
-    let best = -1, bd = 26; // hit-slop: 26 css px radius (>= 48px target)
-    for (let i = 0; i < 16; i++) { const d = near(mx[i] as number, my[i] as number, mz[i] as number); if (d < bd) { bd = d; best = i; } }
-    if (best >= 0) { ev.onPickMarble?.(best); return; }
-    let bc: MarblePos | null = null; bd = 24;
-    for (const c of CELLS) { const [x, z] = posToXZ(c, viewSeat); const d = near(x, BOARD_Y, z); if (d < bd) { bd = d; bc = c; } }
-    if (bc) { ev.onPickCell?.(bc); return; }
-    if (peekId) { peekId = null; relayoutHand(viewSeat, 160); }
-    ev.onPickNothing?.();
+  /** Nearest interactive thing on the board: a target marble or a destination square. */
+  function nearestTarget(px: number, py: number, rect: DOMRect, slop: number): { marble?: number; cell?: MarblePos } | null {
+    if (!targets) return null;
+    let best: { marble?: number; cell?: MarblePos } | null = null, bd = slop;
+    for (const id of targets.marbles ?? []) {
+      const [sx, sy] = screenOf(mx[id] as number, my[id] as number, mz[id] as number, rect);
+      const d = Math.hypot(sx - px, sy - py);
+      if (d < bd) { bd = d; best = { marble: id }; }
+    }
+    for (const c of targets.cells ?? []) {
+      const [x, z] = posToXZ(c, viewSeat);
+      const [sx, sy] = screenOf(x, BOARD_Y, z, rect);
+      const d = Math.hypot(sx - px, sy - py) - 2; // ties go to the destination
+      if (d < bd) { bd = d; best = { cell: c }; }
+    }
+    return best;
   }
-  let down: { x: number; y: number; t: number } | null = null;
-  const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; };
-  const onUp = (e: PointerEvent) => {
-    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 10 && performance.now() - down.t < 600) pick(e.clientX, e.clientY);
-    down = null;
+  let lastTap = { t: 0, x: 0, y: 0, empty: false };
+  function pick(cx: number, cy: number) {
+    const rect = rectNow();
+    if (dealing) { tweens.finishAll(); dealing = false; return; }
+    const px = cx - rect.left, py = cy - rect.top;
+    const now = performance.now();
+    const dbl = lastTap.empty && now - lastTap.t < 320 && Math.hypot(px - lastTap.x, py - lastTap.y) < 36;
+    lastTap = { t: now, x: px, y: py, empty: false };
+    if (interactive) {
+      const card = nearestOwnCard(px, py, rect, 34);
+      if (card) { peekId = card.id; relayoutHand(viewSeat, 160); ev.onPickCard?.(card.id); return; }
+      const t = nearestTarget(px, py, rect, 32);
+      if (t?.cell) { ev.onPickCell?.(t.cell); return; }
+      if (t?.marble !== undefined) { ev.onPickMarble?.(t.marble); return; }
+    }
+    // Empty space: a double tap brings the camera back behind the own seat.
+    if (dbl) { resetCamera(true); lastTap.empty = false; return; }
+    lastTap.empty = true;
+    if (peekId) { peekId = null; relayoutHand(viewSeat, 160); }
+    if (interactive) ev.onPickNothing?.();
+  }
+
+  // ---------- gestures: tap = pick, one-finger drag = orbit (or move a marble), two fingers = pinch zoom ----------
+  type Press = { id: number; x: number; y: number; t: number; lx: number; ly: number; lt: number; vx: number };
+  const presses = new Map<number, Press>();
+  let gesture: 'none' | 'tap' | 'orbit' | 'marble' | 'pinch' = 'none';
+  let dragMarble = -1, pinch0 = { d: 1, zoom: 1 };
+  const dragging = () => gesture === 'orbit' || gesture === 'marble' || gesture === 'pinch';
+  function boardPoint(cx: number, cy: number): Vector3 | null {
+    const rect = rectNow();
+    ndc.set(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    return ray.ray.intersectPlane(boardPlane, v3) ? v3.clone() : null;
+  }
+  function nearestCellXZ(x: number, z: number): MarblePos | null {
+    let best: MarblePos | null = null, bd = CELL * 1.7;
+    for (const c of targets?.cells ?? []) {
+      const [cx, cz] = posToXZ(c, viewSeat);
+      const d = Math.hypot(cx - x, cz - z);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+  const onDown = (e: PointerEvent) => {
+    if (e.button > 0) return;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    const now = performance.now();
+    presses.set(e.pointerId, { id: e.pointerId, x: e.clientX, y: e.clientY, t: now, lx: e.clientX, ly: e.clientY, lt: now, vx: 0 });
+    if (presses.size === 2) {
+      const [a, b] = [...presses.values()] as [Press, Press];
+      pinch0 = { d: Math.max(20, Math.hypot(a.lx - b.lx, a.ly - b.ly)), zoom: goal.zoom };
+      if (gesture === 'marble') endMarbleDrag(null);
+      gesture = 'pinch';
+      return;
+    }
+    if (presses.size > 2) return;
+    gesture = 'tap';
+    dragMarble = -1;
+    if (interactive && targets?.marbles?.length && !dealing) {
+      const rect = rectNow();
+      const t = nearestTarget(e.clientX - rect.left, e.clientY - rect.top, rect, 30);
+      if (t?.marble !== undefined) dragMarble = t.marble;
+    }
   };
+  function endMarbleDrag(cell: MarblePos | null) {
+    const id = dragMarble;
+    dragMarble = -1; gesture = 'none';
+    if (id < 0) return;
+    snapCell = null;
+    void arcMarble(id, mp[id] as MarblePos, 160, 0.15);
+    ev.onDrop?.(id, cell);
+    refreshOverlays();
+  }
   const onMove = (e: PointerEvent) => {
-    if (e.pointerType !== 'mouse' || !interactive || spectator || dealing) return;
-    const rect = canvas.getBoundingClientRect();
-    const c = nearestOwnCard(e.clientX - rect.left, e.clientY - rect.top, rect, 24);
+    const p = presses.get(e.pointerId);
+    if (!p) { hover(e); return; }
+    const now = performance.now();
+    const dx = e.clientX - p.lx, dy = e.clientY - p.ly;
+    if (now - p.lt > 0) p.vx = dx / Math.max(1, now - p.lt);
+    p.lx = e.clientX; p.ly = e.clientY; p.lt = now;
+    if (gesture === 'pinch') {
+      const [a, b] = [...presses.values()] as [Press, Press];
+      if (!a || !b) return;
+      const d = Math.max(20, Math.hypot(a.lx - b.lx, a.ly - b.ly));
+      goal.zoom = clamp(pinch0.zoom * (pinch0.d / d), ZOOM_MIN, ZOOM_MAX);
+      if (reduced()) { cam.zoom = goal.zoom; poseCamera(); }
+      request(); return;
+    }
+    if (gesture === 'tap' && Math.hypot(e.clientX - p.x, e.clientY - p.y) > SLOP) {
+      if (dragMarble >= 0 && ev.onDragStart?.(dragMarble)) { gesture = 'marble'; tweens.finishAll(); }
+      else { gesture = 'orbit'; dragMarble = -1; }
+    }
+    if (gesture === 'orbit') {
+      const rect = rectNow();
+      goal.yaw -= (dx / Math.max(200, rect.width)) * Math.PI * 1.15;
+      goal.pitch = clamp(goal.pitch + (dy / Math.max(200, rect.height)) * Math.PI * 0.7, PITCH_MIN, PITCH_MAX);
+      if (reduced()) { cam.yaw = goal.yaw; cam.pitch = goal.pitch; poseCamera(); }
+      request(); return;
+    }
+    if (gesture === 'marble' && dragMarble >= 0) {
+      const bp = boardPoint(e.clientX, e.clientY);
+      if (bp) {
+        mx[dragMarble] = bp.x; mz[dragMarble] = bp.z; my[dragMarble] = REST_Y + 0.42; writeMarble(dragMarble);
+        const sc = nearestCellXZ(bp.x, bp.z);
+        if (!samePos(sc, snapCell)) { snapCell = sc; refreshOverlays(); }
+      }
+      request(true);
+    }
+  };
+  const onUp = (e: PointerEvent) => {
+    const p = presses.get(e.pointerId);
+    presses.delete(e.pointerId);
+    if (!p) return;
+    if (gesture === 'pinch') { if (presses.size === 0) gesture = 'none'; return; }
+    if (gesture === 'marble') { endMarbleDrag(nearestCellXZ(mx[dragMarble] as number, mz[dragMarble] as number)); return; }
+    if (gesture === 'orbit') {
+      // a little glide after a flick (not with reduced motion)
+      if (!reduced() && performance.now() - p.lt < 60) goal.yaw -= clamp(p.vx, -2.5, 2.5) * 0.12 * Math.PI;
+      gesture = 'none'; request(); return;
+    }
+    if (gesture === 'tap' && performance.now() - p.t < 650) pick(e.clientX, e.clientY);
+    gesture = 'none'; dragMarble = -1;
+  };
+  const onCancel = (e: PointerEvent) => {
+    presses.delete(e.pointerId);
+    if (gesture === 'marble') endMarbleDrag(null);
+    if (!presses.size) gesture = 'none';
+  };
+  function hover(e: PointerEvent) {
+    if (e.pointerType !== 'mouse' || !interactive || dealing) return;
+    const rect = rectNow();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const c = spectator ? null : nearestOwnCard(px, py, rect, 24);
     const id = c?.id ?? null;
+    const onTarget = !c && !!nearestTarget(px, py, rect, 26);
+    canvas.style.cursor = id || onTarget ? 'pointer' : 'grab';
     if (id === hoverId) return;
-    hoverId = id; canvas.style.cursor = id ? 'pointer' : '';
+    hoverId = id;
     relayoutHand(viewSeat, 120);
     ev.onHoverCard?.(id);
-  };
+  }
   const onLeave = () => { if (hoverId) { hoverId = null; canvas.style.cursor = ''; relayoutHand(viewSeat, 120); ev.onHoverCard?.(null); } };
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const f = Math.exp(clamp(e.deltaY, -120, 120) * (e.ctrlKey ? 0.01 : 0.0018));
+    goal.zoom = clamp(goal.zoom * f, ZOOM_MIN, ZOOM_MAX);
+    if (reduced()) { cam.zoom = goal.zoom; poseCamera(); }
+    request();
+  };
   canvas.addEventListener('pointerdown', onDown);
   canvas.addEventListener('pointerup', onUp);
+  canvas.addEventListener('pointercancel', onCancel);
   canvas.addEventListener('pointermove', onMove);
   canvas.addEventListener('pointerleave', onLeave);
+  canvas.addEventListener('wheel', onWheel, { passive: false });
+
+  // ---------- pirate reading animation ----------
+  let npcRead = 0, npcJob = 0;
+  function npcTo(to: number, dur: number): Promise<void> {
+    const job = ++npcJob, from = npcRead;
+    if (reduced() || quality === 'low') { npcRead = to; npc.setRead(to); request(); return Promise.resolve(); }
+    return tweens.add(dur, (t) => { if (job !== npcJob) return; npcRead = lerp(from, to, t); npc.setRead(npcRead); }, { ease: easeInOut });
+  }
 
   // ---------- lifecycle ----------
   const onLost = (e: Event) => { e.preventDefault(); ev.onStatus?.('context-lost'); };
-  const onRestored = () => { for (const t of [atlas, wood.map, wood.bump, feltM.map, feltM.bump, swirl, soft, bokeh]) t.needsUpdate = true; request(); ev.onStatus?.('restored'); };
+  const onRestored = () => { for (const t of [atlas, wood.map, wood.bump, feltM.map, feltM.bump, swirl, soft, bokeh, star]) t.needsUpdate = true; request(true); ev.onStatus?.('restored'); };
   canvas.addEventListener('webglcontextlost', onLost);
   canvas.addEventListener('webglcontextrestored', onRestored);
   const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => resize()) : null;
   ro?.observe(canvas);
   const onMq = () => request();
   mq?.addEventListener?.('change', onMq);
-  const onVis = () => { if (document.visibilityState === 'visible') request(); };
+  const onVis = () => { if (document.visibilityState === 'visible') { lastFrame = 0; request(); } };
   document.addEventListener('visibilitychange', onVis);
 
   scene.updateMatrixWorld();
@@ -746,15 +1046,27 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
   ev.onStatus?.('ready');
 
   const SEAT_AR = ['المقعد 1', 'المقعد 2', 'المقعد 3', 'المقعد 4'];
+  const project = (p: Vector3): { x: number; y: number } | null => {
+    v3.copy(p).project(camera);
+    const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
+    const x = (v3.x * 0.5 + 0.5) * w, y = (-v3.y * 0.5 + 0.5) * h;
+    return v3.z > 1 || x < 0 || y < 0 || x > w || y > h ? null : { x, y };
+  };
+  const tmp = new Vector3(), tmp2 = new Vector3();
   const api: SceneApi = {
-    applyView, playDeal, playMove,
-    skipAnimations() { tweens.finishAll(); dealing = false; request(); },
+    applyView, playDeal, playMove, playThrow,
+    skipAnimations() { tweens.finishAll(); dealing = false; request(true); },
     setSelection(s) {
       sel = { cardId: s.cardId ?? null, marbleId: s.marbleId ?? null };
       peekId = sel.cardId;
       refreshOverlays();
     },
     setHints(h) { hints = h; refreshOverlays(); },
+    setTargets(t) {
+      targets = t && (t.marbles?.length || t.cells?.length || t.chosen || (t.selected ?? null) !== null) ? t : null;
+      if (!targets) snapCell = null;
+      refreshOverlays();
+    },
     setInsets(i) { insetTop = i.top ?? 0; insetBottom = i.bottom ?? 0; frameCamera(); request(); },
     setViewSeat(seat, animated = true) {
       if (!spectator || !(seat >= 0 && seat <= 3) || seat === viewSeat) return;
@@ -763,10 +1075,9 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       specSeat = seat;
       tweens.finishAll(); epoch++; dealing = false;
       if (lastView) { setView(lastView); buildHands(lastView, false); refreshOverlays(); }
-      if (!animated || reduced() || d === 0) { camYaw = 0; poseCamera(); request(); return; }
       const y0 = (-d * Math.PI) / 2;
-      camYaw = y0;
-      void tweens.add(380, (t) => { camYaw = y0 * (1 - t); poseCamera(); }, { ease: easeInOut });
+      goal.yaw = 0; cam.yaw = animated && !reduced() ? y0 : 0;
+      poseCamera(); request();
     },
     setQuality(q) { if (q === 'high' || q === 'low') applyQuality(q, 'user'); },
     get quality() { return quality; },
@@ -774,12 +1085,30 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       const a = avatars[seat];
       if (!a) return null;
       a.root.updateMatrixWorld(true);
-      v3.copy(a.head).applyMatrix4(a.root.matrixWorld).project(camera);
-      const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
-      const x = (v3.x * 0.5 + 0.5) * w, y = (-v3.y * 0.5 + 0.5) * h;
-      return v3.z > 1 || x < 0 || y < 0 || x > w || y > h ? null : { x, y };
+      return project(tmp.copy(a.head).applyMatrix4(a.root.matrixWorld));
     },
-    resetCamera(animated = true) { setZoom(1, animated); },
+    cardAnchor(id) {
+      if (spectator) return null;
+      const c = (hands[viewSeat] as CardObj[]).find((x) => x.id === id);
+      if (!c || !c.mesh.visible) return null;
+      c.mesh.updateMatrixWorld(true);
+      const top = project(tmp.set(0, CARD_H / 2, 0).applyMatrix4(c.mesh.matrixWorld));
+      const l = project(tmp2.set(-CARD_W / 2, CARD_H / 2, 0).applyMatrix4(c.mesh.matrixWorld));
+      const r = project(tmp.set(CARD_W / 2, CARD_H / 2, 0).applyMatrix4(c.mesh.matrixWorld));
+      if (!top) return null;
+      return { ...top, w: l && r ? Math.hypot(r.x - l.x, r.y - l.y) : 40 };
+    },
+    npcAnchor() {
+      npc.root.updateMatrixWorld(true);
+      const head = project(tmp.copy(npc.head).applyMatrix4(npc.root.matrixWorld));
+      const b = project(tmp.copy(npc.badge).applyMatrix4(npc.root.matrixWorld));
+      const bl = project(tmp2.copy(npc.badge).add(new Vector3(-0.65, 0, 0)).applyMatrix4(npc.root.matrixWorld));
+      const br = project(tmp2.copy(npc.badge).add(new Vector3(0.65, 0, 0)).applyMatrix4(npc.root.matrixWorld));
+      return { head, badge: b ? { ...b, w: bl && br ? Math.hypot(br.x - bl.x, br.y - bl.y) : 0 } : null };
+    },
+    npcRead() { return npcTo(1, 900); },
+    npcDone() { void npcTo(0, 500); },
+    resetCamera,
     setZoom,
     setReducedMotion(v) { reducedOverride = v; request(); },
     setInteractive(v) { interactive = v; },
@@ -801,7 +1130,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       tweens.finishAll();
       ro?.disconnect(); mq?.removeEventListener?.('change', onMq);
       document.removeEventListener('visibilitychange', onVis);
-      for (const [n, f] of [['pointerdown', onDown], ['pointerup', onUp], ['pointermove', onMove], ['pointerleave', onLeave]] as const) canvas.removeEventListener(n, f as EventListener);
+      for (const [n, f] of [['pointerdown', onDown], ['pointerup', onUp], ['pointercancel', onCancel], ['pointermove', onMove], ['pointerleave', onLeave], ['wheel', onWheel]] as const) canvas.removeEventListener(n, f as EventListener);
       canvas.removeEventListener('webglcontextlost', onLost); canvas.removeEventListener('webglcontextrestored', onRestored);
       scene.traverse((o) => {
         const m = o as Mesh;
@@ -811,7 +1140,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       for (const t of [wood.map, wood.bump, feltM.map, feltM.bump, atlas, envTex]) t.dispose();
       cafe.dispose();
       for (const d of disposables) d.dispose();
-      holes.dispose(); starts.dispose(); marbles.dispose(); mirror.dispose(); blobs.dispose();
+      for (const m of [holeRing, holeCore, startRings, lanes, trays, stars, marbles, cores, mirror, blobs, caustics]) m.dispose();
       lamp.shadow.map?.dispose();
       renderer.dispose(); renderer.forceContextLoss();
     },

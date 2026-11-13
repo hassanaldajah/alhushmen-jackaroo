@@ -37,6 +37,9 @@ const P: Record<string, string> = {
   chat: '<path d="M4 5h16v11H9l-5 4z"/>',
   crown: '<path d="M3 8l4 4 5-7 5 7 4-4-2 11H5z"/>',
   voice: '<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c0-3 3-5 6-5s6 2 6 5M16 14c3 0 5 2 5 5"/>',
+  camera: '<circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',
+  logout: '<path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9"/>',
+  joke: '<circle cx="12" cy="12" r="9"/><path d="M7.5 13.5h9a4.5 4.5 0 0 1-9 0zM9 9.5h.01M15 9.5h.01"/>',
 };
 export function icon(name: string, cls = ''): SVGSVGElement {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

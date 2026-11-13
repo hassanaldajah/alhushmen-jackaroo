@@ -27,7 +27,7 @@ export interface SceneView {
   handCounts: number[];
   /** 16 entries indexed by marble id. */
   marbles: MarblePos[];
-  /** Last played card per seat, or null. */
+  /** Last card each seat threw (the centre pile keeps one per player), or null. */
   table: (CardRef | null)[];
 }
 
@@ -48,18 +48,38 @@ export type Quality = 'high' | 'low';
 
 export type SfxName = 'deal' | 'flip' | 'throw' | 'hop' | 'capture';
 
+/** What the current player may touch on the board right now (set by the UI bridge from the server's legal plays). */
+export interface Targets {
+  /** Marbles that can be tapped or dragged now (ring + lift on hover). */
+  marbles?: number[];
+  /** Legal destination squares of the selected marble (rings); a tap or a drop on one picks it. */
+  cells?: MarblePos[];
+  /** Marble that is selected (gold ring). */
+  selected?: number | null;
+  /** Chosen destination: a ghost of `selected` waits there until the player confirms. */
+  chosen?: MarblePos | null;
+}
+
 export interface SceneEvents {
   onPickCard?: (cardId: string) => void;
   onPickMarble?: (marbleId: number) => void;
   onPickCell?: (pos: MarblePos) => void;
   /** Tap on empty board/background. */
   onPickNothing?: () => void;
+  /** A drag started on a target marble; return true to let the marble follow the finger. */
+  onDragStart?: (marbleId: number) => boolean;
+  /** Drag ended: the nearest target cell under the marble (null = dropped elsewhere, it glides back). */
+  onDrop?: (marbleId: number, cell: MarblePos | null) => void;
   onSfx?: (name: SfxName) => void;
   /** Pointer hover over an own card (mouse only); null when leaving. Informational: the scene already previews it. */
   onHoverCard?: (cardId: string | null) => void;
   /** Quality changed. reason 'auto' = scene degraded itself (show toast "خفّضنا الجودة عشان الأداء" with Undo -> setQuality('high')). */
   onQuality?: (q: Quality, reason: 'auto' | 'user') => void;
   onStatus?: (s: 'ready' | 'context-lost' | 'restored' | 'degraded') => void;
+  /** The player moved the camera away from (true) or back to (false) the default seat view. */
+  onCamera?: (moved: boolean) => void;
+  /** A frame was drawn after the camera or a card moved (reposition HTML labels). */
+  onFrame?: () => void;
 }
 
 export interface SceneOptions {
@@ -72,14 +92,20 @@ export interface SceneOptions {
 
 export interface Hints { cardIds?: string[]; marbleIds?: number[]; cells?: MarblePos[] }
 
+export interface ScreenPoint { x: number; y: number }
+
 export interface SceneApi {
   applyView(view: SceneView): void;
   playDeal(view: SceneView): Promise<void>;
   playMove(ev: MoveEvent): Promise<void>;
+  /** A card leaves a hand for that seat's spot in the centre pile (play, discard, burn). */
+  playThrow(seat: number, card: CardRef): Promise<void>;
   skipAnimations(): void;
   setSelection(sel: { cardId?: string | null; marbleId?: number | null }): void;
   /** On request only; never selects anything. Pass null to clear. */
   setHints(h: Hints | null): void;
+  /** Interactive marbles / destinations for the current step (null = nothing on the board is interactive). */
+  setTargets(t: Targets | null): void;
   /** CSS px covered by HUD/hand bar; the board is framed in the free area. */
   setInsets(i: { top?: number; bottom?: number }): void;
   /** Spectators only: which seat's side is at the bottom (0..3). Ignored for players. Default 0 (neutral). */
@@ -88,7 +114,15 @@ export interface SceneApi {
   setQuality(q: Quality): void;
   readonly quality: Quality;
   /** CSS px (relative to the canvas) above the avatar's head at a seat, for speech bubbles; null if off-screen. */
-  seatAnchor(seat: number): { x: number; y: number } | null;
+  seatAnchor(seat: number): ScreenPoint | null;
+  /** Top centre of an own card on screen (tooltip anchor) and its on-screen width; null if hidden/off-screen. */
+  cardAnchor(cardId: string): (ScreenPoint & { w: number }) | null;
+  /** Pirate NPC: point above his head, and his chest badge (centre + on-screen width). */
+  npcAnchor(): { head: ScreenPoint | null; badge: (ScreenPoint & { w: number }) | null };
+  /** Pirate pulls the folded paper out of his pocket; resolves when he is ready to read. */
+  npcRead(): Promise<void>;
+  /** Pirate folds the paper away. */
+  npcDone(): void;
   resetCamera(animated?: boolean): void;
   setZoom(z: number, animated?: boolean): void;
   setReducedMotion(v: boolean | null): void;

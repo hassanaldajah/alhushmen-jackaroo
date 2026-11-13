@@ -53,15 +53,15 @@ export function woodMaps(size: number): PbrMaps {
   return { map: tiled(c1, true, 3), bump: tiled(c2, false, 3) };
 }
 
-/** Woven felt: dense fibre noise. */
+/** Board cloth: fine coffee-brown leather/baize fibre noise (gold + brown palette, no green). */
 export function feltMaps(size: number): PbrMaps {
   const r = rng(11);
   const [c1, x1] = cv2d(size, size);
   const [c2, x2] = cv2d(size, size);
   x1.fillStyle = CSS.felt600; x1.fillRect(0, 0, size, size);
   x2.fillStyle = '#808080'; x2.fillRect(0, 0, size, size);
-  const tones = [CSS.felt500, CSS.felt700, '#0d3322', '#2f8a60'];
-  for (let i = 0; i < size * size * 0.06; i++) {
+  const tones = [CSS.felt500, CSS.felt700, '#24170d', '#6a4a2a'];
+  for (let i = 0; i < size * size * 0.035; i++) {
     const x = r() * size, y = r() * size, l = 1 + r() * 3, a = r() > 0.5;
     x1.globalAlpha = 0.25 + r() * 0.3; x1.fillStyle = tones[i % 4] as string;
     x1.fillRect(x, y, a ? l : 1, a ? 1 : l);
@@ -109,6 +109,24 @@ export function bokehTexture(): CanvasTexture {
     rg.addColorStop(0, `rgba(${c},0.55)`); rg.addColorStop(0.7, `rgba(${c},0.35)`); rg.addColorStop(1, `rgba(${c},0)`);
     ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(x, y, rad, 0, 6.2832); ctx.fill();
   }
+  const t = new CanvasTexture(cv); t.colorSpace = SRGBColorSpace;
+  return t;
+}
+
+/** Brass eight-point star inlay for the four empty board corners (transparent background). */
+export function starTexture(): CanvasTexture {
+  const n = 256;
+  const [cv, ctx] = cv2d(n, n);
+  const c = n / 2;
+  const star = (r1: number, r2: number) => {
+    ctx.beginPath();
+    for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2 - Math.PI / 2, r = i % 2 ? r2 : r1; ctx.lineTo(c + Math.cos(a) * r, c + Math.sin(a) * r); }
+    ctx.closePath();
+  };
+  ctx.lineJoin = 'round';
+  star(118, 58); ctx.fillStyle = 'rgba(201,162,75,0.16)'; ctx.fill(); ctx.strokeStyle = 'rgba(232,207,138,0.55)'; ctx.lineWidth = 4; ctx.stroke();
+  star(70, 34); ctx.strokeStyle = 'rgba(201,162,75,0.5)'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.beginPath(); ctx.arc(c, c, 14, 0, Math.PI * 2); ctx.fillStyle = 'rgba(232,207,138,0.6)'; ctx.fill();
   const t = new CanvasTexture(cv); t.colorSpace = SRGBColorSpace;
   return t;
 }

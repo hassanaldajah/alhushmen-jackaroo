@@ -9,7 +9,7 @@
   --cream-50: #FAF3E3; --cream-200: #E6D9BC; --ink-900: #1A1410;
   --ruby-500: #B3322E; --ok-500: #E8CF8A; --warn-500: #E0A030;
   --scrim: rgba(15, 9, 5, .72);
-  --team-a: #D9A441; --team-b: #3FA7A0;
+  --team-a: #D9A441; --team-b: #C9CED6; /* gold vs pearl-silver: no green anywhere */
 
   --font: "Reem Kufi", "Cairo", "Noto Naskh Arabic", Tahoma, system-ui, sans-serif; --font-display: var(--font);
   --fs-xs: 13px; --lh-xs: 20px; --fs-sm: 15px; --lh-sm: 24px; --fs-md: 17px; --lh-md: 30px;
@@ -23,13 +23,19 @@
   --ease-out: cubic-bezier(.22,1,.36,1); --ease-in-out: cubic-bezier(.65,0,.35,1); --ease-spring: cubic-bezier(.34,1.56,.64,1);
   --t-fast: 150ms; --t-med: 250ms; --t-slow: 400ms;
 
-  --status-h: 56px; --hand-h: 112px; --card-w: 56px; --card-h: 80px; --tap: 48px;
+  --status-h: 52px; --hand-h: 112px; --card-w: 56px; --card-h: 80px; --tap: 48px;
+  /* physical-side safe areas (the dock and rail live on the physical left in RTL too) */
   --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-s: env(safe-area-inset-left, 0px); --safe-e: env(safe-area-inset-right, 0px);
+  --gutter: 16px; --rail: 42px; --dock-w: 58px;
   --text: var(--cream-50); --text-2: var(--cream-200); --border: var(--wood-500);
 }
+@media (max-width: 374px) { :root { --gutter: 12px; --fs-xl: 25px; --lh-xl: 38px; } }
+@media (min-width: 390px) { :root { --gutter: 20px; } }
 @media (min-width: 480px) { :root { --card-w: 64px; --card-h: 92px; } }
-@media (max-height: 479px) and (orientation: landscape) { :root { --status-h: 44px; --hand-h: 88px; } }
+@media (min-width: 768px) { :root { --status-h: 60px; --gutter: 24px; --rail: 44px; --dock-w: 60px; } }
+/* landscape phones: short screen, the dock becomes a row */
+@media (max-height: 500px) and (orientation: landscape) { :root { --status-h: 44px; --hand-h: 88px; --rail: 40px; --dock-w: 176px; } }
 :root[data-hc="1"] { --text: #fff; --text-2: #fff; --border: var(--brass-300); }
 :root[data-motion="reduce"] { --t-fast: 100ms; --t-med: 100ms; --t-slow: 100ms; }
 @media (prefers-reduced-motion: reduce) { :root:not([data-motion="full"]) { --t-fast: 100ms; --t-med: 100ms; --t-slow: 100ms; } }

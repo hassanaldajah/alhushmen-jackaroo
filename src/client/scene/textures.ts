@@ -40,7 +40,7 @@ function drawFace(ctx: CanvasRenderingContext2D, idx: number) {
   const w = CW, h = ART_H;
   rr(ctx, 1, 1, w - 2, h - 2, 24);
   if (idx === BACK_INDEX) {
-    ctx.fillStyle = CSS.felt700; ctx.fill();
+    ctx.fillStyle = '#4A1E16'; ctx.fill(); // burgundy-brown back with a brass lattice (no green)
     ctx.save(); ctx.clip();
     ctx.strokeStyle = CSS.brass500; ctx.globalAlpha = 0.7; ctx.lineWidth = 3;
     for (let i = -h; i < w + h; i += 34) {

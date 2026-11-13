@@ -177,10 +177,16 @@ export class VoiceMesh {
     if (changed) this.onChange();
   }
 
+  /** Hang up everything and release the mic (logout). start() can be called again afterwards. */
   stop(): void {
-    clearInterval(this.poll);
+    clearInterval(this.poll); this.poll = 0;
     for (const id of [...this.links.keys()]) this.close(id);
     this.stream?.getTracks().forEach((t) => t.stop());
+    this.stream = null; this.track = null; this.selfAnalyser = null;
+    this.peers.clear();
+    this.selfId = ''; this.selfSpeaking = false; this.micState = 'listen';
+    this.onSpeaking(false);
+    this.onChange();
   }
 }
 

@@ -55,7 +55,7 @@ export class MusicCard {
     this.place();
   }
 
-  /** Auto-place in a corner clear of the status bar, hand bar and confirm bar; user drag overrides. */
+  /** Auto-place top-right under the status bar (the left side holds the rail and the dock); user drag overrides. */
   private place(): void {
     if (this.el.hidden) return;
     const cs = getComputedStyle(document.documentElement);
@@ -63,7 +63,7 @@ export class MusicCard {
     const w = this.el.offsetWidth || 200, hh = this.el.offsetHeight || 290;
     const sb = px('--status-h'), hb = px('--hand-h'), gap = px('--sp-2'), bar = px('--tap') + px('--sp-3') * 2; // confirm bar height
     const minY = sb + gap, maxY = Math.max(minY, innerHeight - hb - bar - hh - gap);
-    const p = this.pos ?? { x: gap, y: maxY };
+    const p = this.pos ?? { x: innerWidth - w - gap, y: minY + gap };
     const x = Math.min(Math.max(0, p.x), innerWidth - w), y = Math.min(Math.max(minY, p.y), maxY);
     this.el.style.left = x + 'px'; this.el.style.top = y + 'px';
   }

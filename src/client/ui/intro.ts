@@ -30,12 +30,22 @@ function mark(): SVGSVGElement {
   return s;
 }
 
+/** Repeat visitors skip the logo for a week (it was replaying on every new tab and slowed the start). */
+const REPLAY_MS = 7 * 24 * 60 * 60 * 1000;
+function seenRecently(): boolean {
+  try {
+    if (sessionStorage.getItem(SEEN)) return true;
+    const t = Number(localStorage.getItem(SEEN) ?? 0);
+    return t > 0 && Date.now() - t < REPLAY_MS;
+  } catch { return false; }
+}
+
 /**
- * Animated logo intro (docs/design.md section 15). Plays once per session, before the passphrase screen.
- * Tap / Enter / Space / Esc skips. Calls done() exactly once.
+ * Animated logo intro (docs/design.md section 15). Plays on the first visit (then once a week), before the
+ * passphrase screen. Tap / Enter / Space / Esc skips. Calls done() exactly once.
  */
 export function playIntro(root: HTMLElement, done: () => void): void {
-  try { if (sessionStorage.getItem(SEEN)) { done(); return; } } catch { /* storage blocked: just play */ }
+  if (seenRecently()) { done(); return; }
   const rm = reducedMotion();
   const el = h('div', { class: 'intro' + (rm ? ' rm' : ''), role: 'img', 'aria-label': GAME_NAME_AR, tabindex: '0' },
     mark(),
@@ -52,7 +62,7 @@ export function playIntro(root: HTMLElement, done: () => void): void {
     finished = true;
     clearTimeout(timer);
     removeEventListener('keydown', onKey);
-    try { sessionStorage.setItem(SEEN, '1'); } catch { /* private mode */ }
+    try { sessionStorage.setItem(SEEN, '1'); localStorage.setItem(SEEN, String(Date.now())); } catch { /* private mode */ }
     el.classList.add('out');
     if (quick) el.classList.add('quick');
     window.setTimeout(done, rm || quick ? 150 : 250);
@@ -60,5 +70,5 @@ export function playIntro(root: HTMLElement, done: () => void): void {
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') { e.preventDefault(); finish(true); } };
   el.addEventListener('pointerdown', () => finish(true));
   addEventListener('keydown', onKey);
-  timer = window.setTimeout(() => finish(false), rm ? 1150 : 2950);
+  timer = window.setTimeout(() => finish(false), rm ? 900 : 2700);
 }

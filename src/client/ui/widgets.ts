@@ -33,6 +33,10 @@ export function toastAction(text: string, label: string, onClick: () => void): v
 }
 
 export interface SheetHandle { el: HTMLElement; body: HTMLElement; close(): void }
+const openSheets = new Set<SheetHandle>();
+/** Close every open sheet (logout, end screens). */
+export function closeAllSheets(): void { for (const s of [...openSheets]) s.close(); }
+export const anySheetOpen = (): boolean => openSheets.size > 0;
 /** Modal sheet: focus trap, Esc, scrim click, returns focus. Background made inert. */
 export function openSheet(title: string, opts: { side?: boolean; tall?: boolean; center?: boolean; onClose?: () => void } = {}): SheetHandle {
   const prev = document.activeElement as HTMLElement | null;
@@ -62,16 +66,20 @@ export function openSheet(title: string, opts: { side?: boolean; tall?: boolean;
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   };
   let done = false;
+  const handle: SheetHandle = { el: scrim, body, close };
   function close(): void {
     if (done) return; done = true;
+    openSheets.delete(handle);
     document.removeEventListener('keydown', key);
-    app?.removeAttribute('inert'); scrim.remove(); prev?.focus(); opts.onClose?.();
+    if (!openSheets.size) app?.removeAttribute('inert');
+    scrim.remove(); prev?.focus(); opts.onClose?.();
   }
   document.addEventListener('keydown', key);
   app?.setAttribute('inert', '');
   document.body.append(scrim);
-  sheet.querySelector<HTMLElement>('h2')?.focus();
-  return { el: scrim, body, close };
+  openSheets.add(handle);
+  sheet.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+  return handle;
 }
 
 export function spinner(): HTMLElement { return h('span', { class: 'spin', 'aria-hidden': 'true' }); }

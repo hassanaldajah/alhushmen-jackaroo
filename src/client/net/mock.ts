@@ -15,6 +15,8 @@ export class MockNet extends Emitter implements Net {
     queue: [], nowPlaying: null, voiceIds: ['me'], voice: [], names: { me: 'أنا' }, serverNow: Date.now(),
   };
   async gate(p: string): Promise<GateReply> { return p.trim() ? { ok: true } : { ok: false }; }
+  async logout(): Promise<boolean> { return true; }
+  close(): void { /* nothing to close */ }
   connect(): void { this.emit('status', 'open'); this.push(); }
   private push(): void { this.emit('view', structuredClone(this.v)); }
   send(m: ClientMsg): void {

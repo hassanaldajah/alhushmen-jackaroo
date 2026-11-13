@@ -25,6 +25,9 @@ export class Chat {
     });
   }
 
+  /** Forget everything (logout). */
+  reset(): void { this.msgs = []; this.muted.clear(); this.unread = 0; this.onUnread(0); }
+
   show(): void {
     this.unread = 0; this.onUnread(0);
     const s = openSheet(T.chat, { side: true, tall: true, onClose: () => { this.open = null; } });

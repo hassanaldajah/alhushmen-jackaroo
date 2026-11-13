@@ -54,6 +54,12 @@ export class WsNet extends Emitter implements Net {
     try { return (await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' })).ok; } catch { return false; }
   }
 
+  /** Same-origin POST (the browser adds the Origin header the server checks); the reply clears the cookie. */
+  async logout(): Promise<boolean> {
+    this.close();
+    try { return (await fetch('/api/logout', { method: 'POST', credentials: 'same-origin', cache: 'no-store' })).ok; } catch { return false; }
+  }
+
   /** Detach and close the current socket so its late events can never reach the app (H3). */
   private dropSocket(): void {
     const old = this.ws;
@@ -167,5 +173,5 @@ export class WsNet extends Emitter implements Net {
     } catch { return [stun]; }
   }
 
-  close(): void { this.closed = true; clearTimeout(this.timer); this.timer = 0; clearTimeout(this.lostTimer); this.lostTimer = 0; this.dropSocket(); }
+  close(): void { this.closed = true; this.tries = 0; clearTimeout(this.timer); this.timer = 0; clearTimeout(this.lostTimer); this.lostTimer = 0; this.dropSocket(); }
 }

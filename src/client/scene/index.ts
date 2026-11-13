@@ -1,16 +1,15 @@
 /**
- * Scene public API (typed in ./types.ts). Round 2 changes (all additive, existing calls unchanged):
- * - Geometry follows src/shared/board.ts: track index 0..75, seat s starts at s*19. MarblePos shape is unchanged
- *   (UI bridge maps protocol {track, square} -> {zone:'track', index: square}).
- * - SceneApi.setViewSeat(seat, animated?)  spectators: which seat's side is at the bottom (default 0).
- * - SceneApi.setQuality('high'|'low') / .quality  persisted in localStorage 'gfx'; also SceneOptions.quality.
- * - SceneEvents.onQuality(q, reason)  reason 'auto' = scene lowered quality itself (UI shows the toast + Undo).
- * - SceneEvents.onHoverCard(id|null)  mouse hover over own card (scene already previews it).
- * - SceneApi.seatAnchor(seat)  canvas CSS px above an avatar's head (dealer joke bubble); null if off-screen.
- * - Card interaction: a tap/click on an own card enlarges it (peek) AND fires onPickCard; setSelection also enlarges.
- *   Second tap on the enlarged card fires onPickCard again (UI decides confirm). Tap on empty space clears the peek.
- *   Phone (pointer: coarse): avatar holds the fan up. Laptop: cards lie in front of the screen, hover lifts a card.
- * - Avatars/cafe/marble look are internal; draw calls target under 180 (high) / 80 (low).
+ * Scene public API (typed in ./types.ts). This module pulls in three.js, so the UI loads it with a dynamic
+ * import (its own chunk): the intro, gate, name screen and lobby never wait for it.
+ *
+ * - Geometry follows src/shared/board.ts: track index 0..75 on a square "snake" path (layout.ts), seat s starts at s*19.
+ * - Orbit camera per player: one-finger/mouse drag rotates around the table, pinch/wheel zooms (limits),
+ *   double tap on empty space or resetCamera() returns behind the own seat. Damped, time-based (60/120 Hz alike).
+ * - setTargets(): the bridge tells the scene which own marbles / destination squares are interactive this step;
+ *   a tap picks them, a drag moves a target marble onto a highlighted destination (onDragStart/onDrop).
+ * - playThrow(): thrown cards stay in the centre pile, one per seat.
+ * - npcAnchor()/npcRead()/npcDone(): the pirate "أيمن" who reads the jokes.
  */
-export { createScene, isWebGLAvailable } from './scene';
+export { createScene } from './scene';
+export { isWebGLAvailable } from './support';
 export type * from './types';
