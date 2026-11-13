@@ -1,0 +1,45 @@
+/* Logo intro (docs/design.md section 15). SVG + CSS transforms only. Colours come from tokens.css. */
+.intro { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-3); cursor: pointer;
+  background: radial-gradient(circle at 50% 40%, var(--wood-700), var(--wood-900) 70%); opacity: 0; animation: in-fade 300ms var(--ease-out) forwards; user-select: none; -webkit-user-select: none; }
+.intro.out { animation: out-fade 250ms var(--ease-in-out) forwards; }
+.intro.out.quick { animation-duration: 150ms; }
+.intro.rm { animation: in-fade 150ms linear forwards; }
+.intro.rm.out { animation: out-fade 150ms linear forwards; }
+@keyframes in-fade { to { opacity: 1; } }
+@keyframes out-fade { from { opacity: 1; } to { opacity: 0; } }
+
+.intro-mark { width: 96px; height: 96px; overflow: visible; }
+.intro-ring { fill: none; stroke: var(--brass-500); stroke-width: 4; stroke-dasharray: 100; stroke-dashoffset: 100; animation: ring 600ms var(--ease-out) 200ms forwards; }
+.intro-star { fill: var(--felt-600); stroke: var(--brass-300); stroke-width: 2; stroke-linejoin: round; transform-box: view-box; transform-origin: 50px 50px; opacity: 0; transform: rotate(-45deg) scale(.6); animation: star 500ms var(--ease-spring) 600ms forwards; }
+.intro-dot { fill: var(--cream-50); opacity: 0; animation: pop 200ms var(--ease-out) 1000ms forwards; }
+.intro-ball { opacity: 0; transform: translate(var(--sx), var(--sy)); animation: roll 600ms var(--ease-in-out) var(--d) forwards; }
+.intro-ball > circle { transform-box: fill-box; transform-origin: center; animation: squash 140ms var(--ease-out) calc(var(--d) + 520ms) both; }
+@keyframes ring { to { stroke-dashoffset: 0; } }
+@keyframes star { to { opacity: 1; transform: none; } }
+@keyframes pop { from { opacity: 0; } to { opacity: 1; } }
+@keyframes roll { 0% { opacity: 0; } 15% { opacity: 1; } 100% { opacity: 1; transform: none; } }
+@keyframes squash { 0% { transform: scale(1, 1); } 50% { transform: scale(1.1, .9); } 100% { transform: scale(1, 1); } }
+
+.intro-word { position: relative; overflow: hidden; padding: 0 var(--sp-3); max-width: 90vw; }
+.intro-word span { display: block; font-family: "Reem Kufi", var(--font); font-weight: 600; font-size: min(44px, 11vw); line-height: 1.8; white-space: nowrap; font-feature-settings: "mark" 1, "ccmp" 1;
+  background: linear-gradient(to bottom, var(--brass-300), var(--brass-500)); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 0 var(--brass-700)); clip-path: inset(0 0 0 100%); transform: translateY(12px); animation: word 800ms var(--ease-out) 1300ms forwards; }
+.intro-word::after { content: ""; position: absolute; top: 0; bottom: 0; width: 28%; inset-inline-start: -40%; background: rgba(255,255,255,.3); transform: skewX(-20deg); opacity: 0; animation: sweep 300ms linear 2400ms forwards; }
+@keyframes word { to { clip-path: inset(0 0 0 0); transform: none; } }
+@keyframes sweep { 0% { opacity: 1; transform: skewX(-20deg) translateX(0); } 100% { opacity: 1; transform: skewX(-20deg) translateX(-480%); } }
+
+.intro-line { position: relative; width: 64%; max-width: 280px; height: 2px; background: var(--brass-500); transform: scaleX(0); animation: line 400ms var(--ease-out) 2000ms forwards; }
+.intro-line i { position: absolute; top: 50%; inset-inline-start: 50%; width: 8px; height: 8px; margin: -4px; background: var(--brass-300); transform: rotate(45deg) scale(0); animation: diamond 300ms var(--ease-spring) 2250ms forwards; }
+@keyframes line { to { transform: scaleX(1); } }
+@keyframes diamond { to { transform: rotate(45deg) scale(1); } }
+
+.intro-skip { position: absolute; bottom: calc(var(--sp-5) + var(--safe-b)); font-size: var(--fs-sm); line-height: var(--lh-sm); color: var(--cream-200); opacity: 0; animation: in-fade 300ms linear 500ms forwards; }
+
+/* Reduced motion: final logo, opacity fade only. */
+.intro.rm * { animation: none !important; }
+.intro.rm .intro-ring { stroke-dashoffset: 0; }
+.intro.rm .intro-star, .intro.rm .intro-dot, .intro.rm .intro-ball, .intro.rm .intro-skip { opacity: 1; transform: none; }
+.intro.rm .intro-word span { clip-path: none; transform: none; }
+.intro.rm .intro-line { transform: none; } .intro.rm .intro-line i { transform: rotate(45deg); }
+.intro.rm .intro-word::after { display: none; }
+:root[data-quality="low"] .intro-word::after { display: none; }

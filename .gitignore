@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+*.log
+coverage/
+.DS_Store
+*-last.json
+../alhushmen-src-backup-*
+backup*/
+PROGRESS.md
+TASKS.md
+docs/audit-prepublish.md
+docs/security.md
