@@ -5,9 +5,9 @@ export const tokens = {
   brass300: '#E8CF8A', brass500: '#C9A24B', brass700: '#8F6F2A',
   cream50: '#FAF3E3', cream200: '#E6D9BC', ink900: '#1A1410',
   ruby500: '#B3322E', ok500: '#E8CF8A', warn500: '#E0A030',
-  teamA: '#D9A441', teamB: '#C9CED6',
-  marblesA: ['#D9A441', '#F2D27A', '#A9791C', '#FFE9A8'],
-  marblesB: ['#C9CED6', '#E6E9EE', '#9AA1AB', '#F4F6F8'],
+  teamA: '#FFD54A', teamB: '#4DB2FF',
+  marblesA: ['#FFD54A', '#FFE27A', '#F2C23A', '#FFF0B0'],
+  marblesB: ['#4DB2FF', '#7CC8FF', '#2F9BF0', '#A8DCFF'],
 } as const;
 
 export function reducedMotion(): boolean {

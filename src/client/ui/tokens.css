@@ -9,7 +9,7 @@
   --cream-50: #FAF3E3; --cream-200: #E6D9BC; --ink-900: #1A1410;
   --ruby-500: #B3322E; --ok-500: #E8CF8A; --warn-500: #E0A030;
   --scrim: rgba(15, 9, 5, .72);
-  --team-a: #D9A441; --team-b: #C9CED6; /* gold vs pearl-silver: no green anywhere */
+  --team-a: #FFD54A; --team-b: #4DB2FF; /* bright gold vs sky blue (marbles match): no green anywhere */
 
   --font: "Reem Kufi", "Cairo", "Noto Naskh Arabic", Tahoma, system-ui, sans-serif; --font-display: var(--font);
   --fs-xs: 13px; --lh-xs: 20px; --fs-sm: 15px; --lh-sm: 24px; --fs-md: 17px; --lh-md: 30px;

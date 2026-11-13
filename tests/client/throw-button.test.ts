@@ -35,21 +35,21 @@ describe('throw button: first-turn "out" with a base marble', () => {
   it('card -> base marble -> start square reaches the throw step', () => {
     const r = rig(plays);
     r.b.selectCard(ace);
-    expect(r.pending).toBeNull();
-    r.priv.pickMarble(1);
-    r.priv.pickCell({ zone: 'track', index: 0 });
-    expect(r.pending?.alt).toBe(false);
+    expect(r.pending?.many).toBe(true);
+    r.b.beginChoice(); // the throw button
+    r.priv.pickMarble(1); // one landing square (own start): plays at once
+    expect(r.pending?.go).toBe(true);
     expect(r.pending?.options.map((o) => o.moves)).toEqual([[{ k: 'out', marble: 1 }]]);
   });
 
   it('re-selecting the same card resets the flow (why a scene tap on the selected card must be ignored)', () => {
     const r = rig(plays);
     r.b.selectCard(ace);
+    r.b.beginChoice();
     r.priv.pickMarble(1);
-    r.priv.pickCell({ zone: 'track', index: 0 });
-    expect(r.pending).not.toBeNull();
+    expect(r.pending?.go).toBe(true);
     r.b.selectCard(ace); // what the old table did for every tap that hit the enlarged card
-    expect(r.pending).toBeNull();
+    expect(r.pending?.go).toBeFalsy(); // back to the start of the flow
   });
 
   it('a tap near a target marble goes to the board, not to the selected card lying over it', () => {

@@ -26,6 +26,23 @@ const rad = (d: number) => (d * Math.PI) / 180;
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const GFX_KEY = 'gfx';
+
+/**
+ * Marble glow: emissive = own instance colour * (base + rim * fresnel). Keeps the glass look, but the colour
+ * never sinks into the brown board or a shadow. Works with instanced colours (vColor).
+ */
+function glow(m: Material, base: number, rim: number): void {
+  m.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )
+      {
+        float fr = pow( 1.0 - clamp( abs( dot( normalize( normal ), normalize( vViewPosition ) ) ), 0.0, 1.0 ), 2.0 );
+        totalEmissiveRadiance += vColor.rgb * ( ${base.toFixed(3)} + ${rim.toFixed(3)} * fr );
+      }
+#endif`);
+  };
+  m.customProgramCacheKey = () => `glow-${base}-${rim}`;
+}
 // Orbit limits (camera distance multiplier and elevation).
 const ZOOM_MIN = 0.5, ZOOM_MAX = 1.6, PITCH_MIN = rad(24), PITCH_MAX = rad(84);
 const DAMP_S = 0.085; // camera damping time constant (frame-rate independent)
@@ -286,6 +303,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     transparent: true, opacity: 0.42, depthWrite: false, specularIntensity: 1,
   }));
   const coreMat = track(new MeshStandardMaterial({ roughness: 0.32, metalness: 0.05, normalMap: swirl, normalScale: new Vector2(1.1, 1.1), envMapIntensity: 0.9 }));
+  // Self-lit in their own (instance) colour plus a soft rim, so marbles read clearly on the brown board even in shadow.
+  glow(solidMat, 0.32, 0.7); glow(shellMat, 0.12, 0.8); glow(coreMat, 0.38, 0.35);
   const marbles = new InstancedMesh(shellGeo, solidMat, 16);
   const cores = new InstancedMesh(coreGeo, coreMat, 16);
   marbles.castShadow = true; cores.castShadow = false;
@@ -369,9 +388,18 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
     let m = rings[ringsUsed];
     if (!m) { m = new Mesh(ringGeo, ringMats.sel); m.renderOrder = 5; scene.add(m); rings.push(m); }
     m.material = ringMats[kind]; m.position.set(x, BOARD_Y + 0.03, z); m.scale.setScalar(scale * (kind === 'sel' ? 1.12 : 1));
-    m.visible = true; ringsUsed++;
+    m.visible = true;
+    let g = glows[ringsUsed];
+    if (!g) { g = new Mesh(ringGeo, glowMats.sel); g.renderOrder = 4; scene.add(g); glows.push(g); }
+    g.material = glowMats[kind]; g.position.set(x, BOARD_Y + 0.025, z); g.scale.setScalar(scale * (kind === 'sel' ? 1.9 : 1.6));
+    g.visible = true;
+    ringsUsed++;
   }
   let snapCell: MarblePos | null = null;
+  // Soft additive glow under every highlight ring: targets stay as visible as the brighter marbles.
+  const glowMats = { sel: track(new MeshBasicMaterial({ map: soft, color: C.brass300, transparent: true, opacity: 0.85, depthWrite: false, blending: AdditiveBlending })),
+    hint: track(new MeshBasicMaterial({ map: soft, color: C.cream50, transparent: true, opacity: 0.55, depthWrite: false, blending: AdditiveBlending })) };
+  const glows: Mesh[] = [];
   function refreshOverlays() {
     ringsUsed = 0;
     const selM = targets?.selected ?? sel.marbleId;
@@ -382,7 +410,13 @@ export function createScene(canvas: HTMLCanvasElement, opts: SceneOptions = {}):
       const chosen = samePos(c, targets?.chosen) || samePos(c, snapCell);
       ring(chosen ? 'sel' : 'hint', x, z, chosen ? 1.15 : 1);
     }
+    // A previewed landing square (single legal play) gets its ring too, even when it is not tappable.
+    if (targets?.chosen && !(targets.cells ?? []).some((c) => samePos(c, targets!.chosen))) {
+      const [x, z] = posToXZ(targets.chosen, viewSeat);
+      ring('sel', x, z, 1.15);
+    }
     for (let i = ringsUsed; i < rings.length; i++) (rings[i] as Mesh).visible = false;
+    for (let i = ringsUsed; i < glows.length; i++) (glows[i] as Mesh).visible = false;
     const gOf = targets?.chosen ? targets.selected ?? null : null;
     if (gOf !== null && targets?.chosen) {
       const [gx, gz] = posToXZ(targets.chosen, viewSeat);

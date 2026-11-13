@@ -11,8 +11,12 @@ import { h } from './dom';
 
 /** One way to complete the chosen card. Nothing is sent until the user confirms an option. */
 export interface PendingOption { summary: string; moves: Move[] }
-/** alt = side options offered while the player is still picking a marble (e.g. the 10's burn). */
-export interface PendingMove { cardId: string; options: PendingOption[]; alt?: boolean }
+/**
+ * alt  = side options offered while the player is still picking a marble (e.g. the 10's burn).
+ * many = the card has several plays: the throw button opens the choice (beginChoice) instead of sending.
+ * go   = after the throw button, the player's choice resolved to exactly one play: send it now.
+ */
+export interface PendingMove { cardId: string; options: PendingOption[]; alt?: boolean; many?: boolean; go?: boolean }
 
 /** What the Table needs from the 3D scene layer. */
 export interface SceneHost {
@@ -25,6 +29,8 @@ export interface SceneHost {
   /** Legal-move highlight, shown on request only; must never select anything. */
   showHints(on: boolean): void;
   cancelPending(): void;
+  /** Throw button on a card with several plays: highlight the candidate marbles (shortest path to a send). */
+  beginChoice(): void;
   /** Phone: thin own-hand strip while a card is selected (bottom edge in canvas px from the bottom); null = normal hand. */
   setHandStrip(b: { bottom: number; left?: number; right?: number } | null): void;
   onPending(cb: (p: PendingMove | null) => void): void;
@@ -131,7 +137,7 @@ function describe(p: Play, rank: string): string {
 }
 
 const PILE_KEY = 'pile';
-type Step = 'none' | 'marble' | 'dest' | 'marble2';
+type Step = 'none' | 'ready' | 'marble' | 'dest' | 'marble2';
 
 let sceneMod: Promise<typeof import('../scene')> | null = null;
 /** Fetch the 3D chunk (three.js) in the background; safe to call many times. */
@@ -171,7 +177,13 @@ export class SceneBridge implements SceneHost, HintSource {
   private disposed = false;
 
   constructor(private net: Net) {
-    const offHint = net.on('hint', (m) => { this.plays = m.plays; if (this.sel) this.selectCard(this.sel); });
+    const offHint = net.on('hint', (m) => {
+      this.plays = m.plays;
+      if (!this.sel) return;
+      const chose = this.step === 'marble' || this.step === 'dest' || this.step === 'marble2';
+      this.selectCard(this.sel);
+      if (chose) this.beginChoice();
+    });
     // A hint reply lost in a reconnect must be re-requested for the same turn.
     const offStatus = net.on('status', (s) => { if (s === 'open') this.hintKey = ''; }); // the fresh view after open asks again
     this.off = () => { offHint(); offStatus(); };
@@ -335,6 +347,11 @@ export class SceneBridge implements SceneHost, HintSource {
   private altOptions(): Play[] { return this.cands().filter((p) => firstMarble(p) === undefined); }
   private targets(t: Targets | null): void { this.scene?.setTargets(t); }
 
+  /**
+   * Card selected: nothing is sent and nothing on the board is interactive yet. One legal play -> "ارمِ" sends it
+   * (its marble and landing square are previewed); several -> "ارمِ" opens the choice; none -> prompt only.
+   * A card with no legal play anywhere comes with the engine's discard (or a burn-only 10) as its one play.
+   */
   selectCard(card: Card | null): void {
     this.sel = card; this.step = 'none'; this.first = null; this.dest = null; this.seconds = [];
     this.scene?.setSelection({ cardId: card?.id ?? null, marbleId: null });
@@ -343,21 +360,43 @@ export class SceneBridge implements SceneHost, HintSource {
     if (!card) { this.promptCb(null); return; }
     const c = this.cands();
     if (!c.length) { this.promptCb(this.plays.length ? T.noMoves : null); return; }
+    this.step = 'ready';
+    if (c.length === 1) {
+      const m = firstMarble(c[0]!);
+      const d = c[0]!.moves[0] ? destOf(c[0]!.moves[0], card.rank, this.wirePos) : null;
+      if (m !== undefined) this.targets({ selected: m, chosen: d }); // preview only: not tappable
+      this.emit(c);
+      return;
+    }
+    this.promptCb(null);
+    this.pendingCb({ cardId: card.id, many: true, options: c.map((p) => ({ summary: describe(p, card.rank), moves: p.moves })) });
+  }
+
+  beginChoice(): void {
+    if (!this.sel || this.step !== 'ready') return;
+    const c = this.cands();
     const firsts = this.firsts();
-    // No marble to pick (discard only, or a 10 whose only legal play is burn) or no 3D board: offer the options directly.
-    if (!firsts.length || !this.scene) { this.emit(c); return; }
+    // No marble to pick (several discards) or no 3D board: offer the options as buttons.
+    if (!firsts.length || !this.scene) { this.step = 'dest'; this.emit(c); return; }
+    if (firsts.length === 1 && !this.altOptions().length) { this.step = 'marble'; this.pickMarble(firsts[0]!); return; }
     this.step = 'marble';
     this.targets({ marbles: firsts });
     this.promptCb(T.pickMarble);
     const alt = this.altOptions();
-    if (alt.length) this.emit(alt, true);
+    this.pendingCb(alt.length ? this.pending(alt, { alt: true }) : null);
   }
 
+  private pending(options: Play[], f: { alt?: boolean; go?: boolean } = {}): PendingMove {
+    const rank = this.sel!.rank;
+    return { cardId: this.sel!.id, ...f, options: options.map((p) => ({ summary: describe(p, rank), moves: p.moves })) };
+  }
+
+  /** Ready options; after "ارمِ" a single resolved play is flagged go (the table sends it straight away). */
   private emit(options: Play[], alt = false): void {
     if (!this.sel) return;
-    const rank = this.sel.rank;
     if (!alt) this.promptCb(null);
-    this.pendingCb({ cardId: this.sel.id, alt, options: options.map((p) => ({ summary: describe(p, rank), moves: p.moves })) });
+    const chosen = this.step !== 'ready' && !alt && options.length === 1;
+    this.pendingCb(this.pending(options, { alt, ...(chosen ? { go: true } : {}) }));
   }
 
   private pickMarble(id: number): void {
@@ -368,7 +407,10 @@ export class SceneBridge implements SceneHost, HintSource {
     if (!firsts.includes(id)) { this.promptCb(T.pickMarble); return; }
     this.first = id; this.dest = null; this.step = 'dest';
     this.scene?.setSelection({ cardId: this.sel.id, marbleId: id });
-    this.targets({ marbles: firsts, selected: id, cells: this.destsFor(id) });
+    const cells = this.destsFor(id);
+    this.targets({ marbles: firsts, selected: id, cells });
+    // One landing square for this marble: no need to ask, take the short path.
+    if (cells.length === 1) { this.pickCell(cells[0]!); return; }
     const alt = this.altOptions();
     if (alt.length) this.emit(alt, true); else this.pendingCb(null);
     this.promptCb(this.sel.rank === 'J' ? T.pickTarget : T.pickDest);
@@ -390,6 +432,7 @@ export class SceneBridge implements SceneHost, HintSource {
       this.pendingCb(null);
       const n1 = (splits[0]!.moves[0] as { n: number }).n;
       this.promptCb(T.pickSecond(7 - n1));
+      if (this.seconds.length === 1) this.pickSecond(this.seconds[0]!);
       return;
     }
     this.step = 'dest';
@@ -423,8 +466,15 @@ export class SceneBridge implements SceneHost, HintSource {
       this.targets({ marbles: this.seconds, selected: this.first, chosen: this.dest, cells: [d] });
       return true;
     }
+    if (this.step !== 'marble' && this.step !== 'dest') return false;
     if (!this.firsts().includes(id)) return false;
-    if (this.first !== id) this.pickMarble(id);
+    if (this.first !== id) {
+      // Drag needs the destinations shown, without the single-destination shortcut sending mid-drag.
+      this.first = id; this.dest = null; this.step = 'dest';
+      this.scene?.setSelection({ cardId: this.sel.id, marbleId: id });
+      this.targets({ marbles: this.firsts(), selected: id, cells: this.destsFor(id) });
+      this.promptCb(this.sel.rank === 'J' ? T.pickTarget : T.pickDest);
+    }
     return true;
   }
 
@@ -436,13 +486,13 @@ export class SceneBridge implements SceneHost, HintSource {
 
   private pickNothing(): void {
     // A tap on empty space only steps back while choosing a destination (never cancels a ready confirm).
-    if (this.step === 'dest' && !this.dest && this.sel) this.selectCard(this.sel);
+    if (this.step === 'dest' && !this.dest && this.sel) { this.selectCard(this.sel); this.beginChoice(); }
   }
 
   cancelPending(): void {
-    if (this.sel && this.scene && this.firsts().length) { this.selectCard(this.sel); return; }
+    if (this.sel) { this.selectCard(this.sel); return; }
     this.first = null; this.dest = null; this.step = 'none';
-    this.scene?.setSelection({ cardId: this.sel?.id ?? null, marbleId: null });
+    this.scene?.setSelection({ cardId: null, marbleId: null });
     this.targets(null);
     this.pendingCb(null);
     this.promptCb(null);

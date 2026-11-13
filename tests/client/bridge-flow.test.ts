@@ -75,8 +75,11 @@ describe('own marble moved by its player: card -> marble -> destination -> confi
   it('only the marbles with a legal play are interactive, then their destinations', () => {
     const r = rig(plays, v);
     r.b.selectCard(card7);
+    expect(r.pending?.many).toBe(true); // several plays: the throw button opens the choice
+    expect(r.log.targets).toBeNull(); // nothing on the board is interactive before that
+    r.b.beginChoice();
     expect(r.log.targets?.marbles?.sort()).toEqual([4, 5]);
-    expect(r.pending).toBeNull(); // nothing to confirm before the player moves a marble
+    expect(r.pending).toBeNull(); // nothing to send before the player picks a marble
     r.priv.pickMarble(4);
     expect(r.log.targets?.selected).toBe(4);
     expect(r.log.targets?.cells).toEqual(expect.arrayContaining([{ zone: 'track', index: 27 }, { zone: 'track', index: 23 }]));
@@ -86,23 +89,26 @@ describe('own marble moved by its player: card -> marble -> destination -> confi
 
   it('a full 7 confirms with exactly that play', () => {
     const r = rig(plays, v);
-    r.b.selectCard(card7); r.priv.pickMarble(4); r.priv.pickCell({ zone: 'track', index: 27 });
+    r.b.selectCard(card7); r.b.beginChoice(); r.priv.pickMarble(4); r.priv.pickCell({ zone: 'track', index: 27 });
     expect(r.pending?.options.map((o) => o.moves)).toEqual([[{ k: 'step', marble: 4, n: 7 }]]);
+    expect(r.pending?.go).toBe(true); // chosen after the throw button: sent at once
     expect(r.log.targets?.chosen).toEqual({ zone: 'track', index: 27 });
   });
 
   it('a split 7 asks for the second marble, chosen by the mover', () => {
     const r = rig(plays, v);
-    r.b.selectCard(card7); r.priv.pickMarble(4); r.priv.pickCell({ zone: 'track', index: 23 });
-    expect(r.pending).toBeNull();
+    r.b.selectCard(card7); r.b.beginChoice(); r.priv.pickMarble(4); r.priv.pickCell({ zone: 'track', index: 23 });
+    // only one marble can take the rest: no extra tap needed
     expect(r.log.targets?.marbles).toEqual([5]);
-    r.priv.pickMarble(5);
+    expect(r.pending?.go).toBe(true);
     expect(r.pending?.options.map((o) => o.moves)).toEqual([[{ k: 'step', marble: 4, n: 3 }, { k: 'step', marble: 5, n: 4 }]]);
   });
 
   it('drag and drop on a destination works like taps; a drop elsewhere changes nothing', () => {
     const r = rig(plays, v);
     r.b.selectCard(card7);
+    expect(r.priv.dragStart(5)).toBe(false); // before the throw button nothing moves
+    r.b.beginChoice();
     expect(r.priv.dragStart(5)).toBe(true);
     r.priv.drop(5, null);
     expect(r.pending).toBeNull();
@@ -115,9 +121,58 @@ describe('own marble moved by its player: card -> marble -> destination -> confi
     const p10: Play[] = [{ cardId: '10H', moves: [{ k: 'burn' }] }, { cardId: '10H', moves: [{ k: 'step', marble: 4, n: 10 }] }];
     const r = rig(p10, v);
     r.b.selectCard({ id: '10H', rank: '10', suit: 'H' } as Card);
+    expect(r.pending?.many).toBe(true);
+    r.b.beginChoice();
     expect(r.pending?.alt).toBe(true);
     expect(r.pending?.options.map((o) => o.moves)).toEqual([[{ k: 'burn' }]]);
     expect(r.log.targets?.marbles).toEqual([4]);
+  });
+});
+
+describe('automatic moves: one legal play needs no marble picking', () => {
+  const pos = { 4: { zone: 'track', square: 20 }, 5: { zone: 'track', square: 30 } } as Record<number, WirePos>;
+  const v = view(pos, { you: { id: 'me', name: 'x', named: true, seat: 1, spectator: false, host: false } as RoomView['you'] });
+  const five: Card = { id: '5S', rank: '5', suit: 'S' };
+
+  it('a single play is ready on select (throw button sends it), previewed but not tappable', () => {
+    const r = rig([{ cardId: '5S', moves: [{ k: 'step', marble: 4, n: 5 }] }], v);
+    r.b.selectCard(five);
+    expect(r.pending?.options.map((o) => o.moves)).toEqual([[{ k: 'step', marble: 4, n: 5 }]]);
+    expect(r.pending?.many).toBeFalsy();
+    expect(r.pending?.go).toBeFalsy(); // never sent without the throw tap
+    expect(r.log.targets).toEqual({ selected: 4, chosen: { zone: 'track', index: 25 } });
+    expect(r.log.targets?.marbles).toBeUndefined();
+  });
+
+  it('several marbles: tapping one with a single destination plays it at once', () => {
+    const r = rig([{ cardId: '5S', moves: [{ k: 'step', marble: 4, n: 5 }] }, { cardId: '5S', moves: [{ k: 'step', marble: 5, n: 5 }] }], v);
+    r.b.selectCard(five);
+    expect(r.pending?.many).toBe(true);
+    r.b.beginChoice();
+    expect(r.log.targets?.marbles?.sort()).toEqual([4, 5]);
+    r.priv.pickMarble(5);
+    expect(r.pending?.go).toBe(true);
+    expect(r.pending?.options.map((o) => o.moves)).toEqual([[{ k: 'step', marble: 5, n: 5 }]]);
+  });
+
+  it('one marble with two destinations (Ace 1 or 11) goes straight to the destination choice', () => {
+    const ace: Card = { id: 'AS', rank: 'A', suit: 'S' };
+    const r = rig([{ cardId: 'AS', moves: [{ k: 'step', marble: 4, n: 1 }] }, { cardId: 'AS', moves: [{ k: 'step', marble: 4, n: 11 }] }], v);
+    r.b.selectCard(ace);
+    r.b.beginChoice();
+    expect(r.log.targets?.selected).toBe(4);
+    expect(r.log.targets?.cells).toEqual([{ zone: 'track', index: 21 }, { zone: 'track', index: 31 }]);
+    expect(r.pending).toBeNull();
+    r.priv.pickCell({ zone: 'track', index: 31 });
+    expect(r.pending?.go).toBe(true);
+    expect(r.pending?.options[0]?.moves).toEqual([{ k: 'step', marble: 4, n: 11 }]);
+  });
+
+  it('no legal play anywhere: the engine discard is the single play of the card', () => {
+    const r = rig([{ cardId: '5S', moves: [{ k: 'discard' }] }, { cardId: 'KH', moves: [{ k: 'discard' }] }], v);
+    r.b.selectCard(five);
+    expect(r.pending?.options.map((o) => o.moves)).toEqual([[{ k: 'discard' }]]);
+    expect(r.pending?.go).toBeFalsy();
   });
 });
 

@@ -14,5 +14,10 @@ export const CSS = {
   ok500: '#E8CF8A', wood700: '#3B2818', wood500: '#6B4A2B', wood900: '#1E140D',
 } as const;
 
-/** Marble color per seat (team A seats 0,2 gold tones / team B seats 1,3 pearl-silver tones, as in tokens.css). */
-export const SEAT_COLORS: readonly number[] = [0xd9a441, 0xb9c0ca, 0xf2c25a, 0xe2e6ec];
+/**
+ * Marble color per seat, chosen to stand out from the coffee-brown board (owner: "the opposite of the table"):
+ * team A (seats 0,2) bright lemon gold, team B (seats 1,3) vivid sky blue. Both >= 4:1 contrast against the
+ * board (tests/client/colors.test.ts). Same values as --team-a / --team-b in tokens.css. No green anywhere.
+ */
+export const TEAM_A = 0xffd54a, TEAM_B = 0x4db2ff;
+export const SEAT_COLORS: readonly number[] = [TEAM_A, TEAM_B, 0xffe27a, 0x7cc8ff];

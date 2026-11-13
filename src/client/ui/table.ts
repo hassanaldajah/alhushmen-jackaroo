@@ -35,6 +35,8 @@ export class Table {
   private previewTimer = 0;
   private tipFor: string | null = null;
   private pending: PendingMove | null = null;
+  /** The throw button was tapped for the current card: a choice that resolves to one play is sent at once. */
+  private armed = false;
   private prompt: string | null = null;
   private hintOn = false;
   private hintTimer = 0;
@@ -91,21 +93,30 @@ export class Table {
     // While the throw bar is up, the step prompt lives inside it (one place, nothing floating over the board).
     this.promptEl.hidden = !t || !this.confirmEl.hidden;
     clear(this.promptEl, t ? h('span', null, t) : null);
-    if (!this.confirmEl.hidden && !(this.pending && !this.pending.alt)) {
+    if (!this.confirmEl.hidden && !(this.pending && !this.pending.alt) && !this.pending?.many) {
       const i = this.confirmEl.querySelector('.info');
       if (i) i.textContent = this.barInfo();
     }
   }
 
   /** Card name + what to do next, for the throw bar while no move is chosen yet. */
-  private barInfo(): string {
+  private barInfo(next?: string): string {
     const c = this.selected ? this.v?.hand.find((x) => x.id === this.selected) : undefined;
-    return [c ? cardName(c) : '', this.prompt ?? T.throwWait].filter(Boolean).join(' - ');
+    return [c ? cardName(c) : '', next ?? this.prompt ?? T.throwWait].filter(Boolean).join(' - ');
   }
 
   private setPending(p: PendingMove | null): void {
+    // The choice made after the throw button resolved to one play: send it now (never without that tap).
+    if (p?.go && this.armed && p.options.length === 1) { this.send(p.cardId, p.options[0]!.moves); return; }
     this.pending = p;
     this.renderConfirm();
+  }
+
+  /** Only reached from a user tap on the throw button (or a marble/square chosen after it). */
+  private send(cardId: string, moves: PendingMove['options'][number]['moves']): void {
+    this.net.send({ t: 'play', cardId, moves });
+    sfx.play('throw');
+    this.reset();
   }
 
   /**
@@ -120,23 +131,23 @@ export class Table {
     this.el.classList.toggle('confirming', show);
     if (!show) { clear(this.confirmEl); this.renderPrompt(); this.syncStrip(); return; }
     const cardId = p?.cardId ?? this.selected!;
-    const go = (o: { moves: PendingMove['options'][number]['moves'] }) => { // only a user tap sends anything
-      this.net.send({ t: 'play', cardId, moves: o.moves });
-      sfx.play('throw');
-      this.reset();
-    };
-    const ready = p && !p.alt ? p : null;
+    const go = (o: { moves: PendingMove['options'][number]['moves'] }) => this.send(cardId, o.moves); // user taps only
+    const ready = p && !p.alt && !p.many ? p : null;
     const multi = !!ready && ready.options.length > 1;
     let main: HTMLElement[];
     if (ready && multi) main = ready.options.map((o) => button(`${T.throwIt}: ${o.summary}`, 'btn-primary throw-btn', () => go(o)));
     else {
-      const t = button(T.throwIt, 'btn-primary throw-btn', () => { if (ready) go(ready.options[0]!); });
-      if (!ready) { t.disabled = true; t.setAttribute('aria-disabled', 'true'); }
+      // One play: send it (the marbles then move by themselves). Several: open the choice on the board.
+      const t = button(T.throwIt, 'btn-primary throw-btn', () => {
+        if (ready) { go(ready.options[0]!); return; }
+        if (p?.many) { this.armed = true; this.scene?.beginChoice(); }
+      });
+      if (!ready && !p?.many) { t.disabled = true; t.setAttribute('aria-disabled', 'true'); }
       main = [t];
     }
     // Side options while the player is still choosing a marble (e.g. burn with a 10).
     const alt = p?.alt ? [h('span', { class: 'alt' }, T.orAlso, ...p.options.map((o) => button(o.summary, 'btn-secondary', () => go(o))))] : [];
-    const info = ready ? (multi ? T.pickOption : ready.options[0]?.summary ?? '') : this.barInfo();
+    const info = ready ? (multi ? T.pickOption : ready.options[0]?.summary ?? '') : p?.many ? this.barInfo(T.throwMany) : this.barInfo();
     clear(this.confirmEl, h('span', { class: 'info' }, info), ...alt, ...main, button(T.cancel, 'btn-secondary', () => this.reset()));
     this.renderPrompt();
     this.syncStrip();
@@ -163,7 +174,7 @@ export class Table {
   }
 
   private reset(): void {
-    this.pending = null; this.selected = null; this.preview = null; this.prompt = null; this.hint(false);
+    this.armed = false; this.pending = null; this.selected = null; this.preview = null; this.prompt = null; this.hint(false);
     this.scene?.selectCard(null); this.renderConfirm(); this.renderHand(); this.renderTip();
   }
 
@@ -270,7 +281,7 @@ export class Table {
     this.preview = null;
     this.selected = this.selected === c.id && !fromScene ? null : c.id;
     sfx.play('flick');
-    this.pending = null;
+    this.pending = null; this.armed = false;
     if (!this.selected) this.prompt = null;
     this.scene?.selectCard(this.selected ? c : null);
     this.renderConfirm();
