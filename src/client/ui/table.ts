@@ -126,13 +126,15 @@ export class Table {
       if (v.turnSeat !== null) announce(myTurn ? T.turnYou : T.turnOther(turnSeat?.name ?? ''), myTurn);
     }
     clear(this.status,
-      h('span', { class: 'pill' + (myTurn ? ' me' : ''), role: 'status' }, v.turnSeat === null ? T.waitingDeal : myTurn ? T.turnYou : T.turnOther(turnSeat?.name ?? '')),
+      h('span', { class: 'pill' + (myTurn ? ' me' : ''), role: 'status' }, v.turnSeat === null ? T.waitingDeal
+        : v.seats.some((s) => s.open) ? T.seatOpenWait
+          : turnSeat && !turnSeat.connected ? T.waitingFor(turnSeat.name ?? '')
+            : myTurn ? T.turnYou : T.turnOther(turnSeat?.name ?? '')),
       myTeam ? teamChip(myTeam) : h('span', { class: 'chip' }, T.spectatorLabel),
       h('span', { class: 'score', 'aria-label': `${T.teamA} ${v.scores.A} ${T.teamB} ${v.scores.B}` },
         h('span', { style: { color: 'var(--team-a)' } }, String(v.scores.A)), ':', h('span', { style: { color: 'var(--team-b)' } }, String(v.scores.B))),
       this.clockEl,
-      h('span', { class: 'spacer' }), this.mic,
-      this.chatBtn(),
+      h('span', { class: 'spacer' }),
       iconButton('settings', T.menu, this.act.menu));
     this.clockAt = Date.now();
     this.tickClock();

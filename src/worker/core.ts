@@ -22,7 +22,7 @@ import {
 import { shuffle, type Rng } from '../engine/rng';
 import { cleanChat, cleanName } from './validate';
 
-export const SEAT_HOLD_MS = 60_000;
+export const SEAT_HOLD_MS = 5 * 60_000; // a player may leave the browser up to 5 min and keep the seat
 export const MSG_PER_10S = 120;
 export const SIGNAL_PER_10S = 200;
 /** Malformed frames tolerated per 10 s before the socket is closed. */
@@ -180,8 +180,16 @@ export class RoomCore {
   hostSid(): string | null {
     return this.s.host;
   }
+  /**
+   * The game (and its clock) pauses while a seat is open, or while the player whose turn it is is
+   * disconnected (held seat): nobody else can move then, so the clock must not count the wait (M2).
+   */
   private paused(): boolean {
-    return this.s.phase === 'playing' && this.s.seats.some((r) => !r || r.open);
+    if (this.s.phase !== 'playing') return false;
+    if (this.s.seats.some((r) => !r || r.open)) return true;
+    const t = this.s.game?.turn;
+    const r = t === undefined ? null : this.s.seats[t];
+    return !!r && r.leftAt !== null;
   }
   private person(sid: string): Person {
     let p = this.s.people[sid];
@@ -411,6 +419,26 @@ export class RoomCore {
     return this.changed(now, this.evalVote(now));
   }
 
+  /**
+   * Rebuild after hibernation or a DO restart. Re-registers surviving sockets (banned sids are refused and
+   * returned for closing) and starts the hold/grace timers for seats and the host that have no socket,
+   * so they expire instead of staying reserved forever (H2/M4).
+   */
+  restore(conns: Conn[], now: number): string[] {
+    const drop: string[] = [];
+    for (const c of conns) {
+      if (this.s.banned.includes(c.sid)) { drop.push(c.key); continue; }
+      this.conns.set(c.key, { key: c.key, sid: c.sid, muted: c.muted });
+    }
+    const live = this.connectedSids();
+    for (const r of this.s.seats) {
+      if (r && !r.open && r.leftAt === null && !live.has(r.sid)) { r.leftAt = now; this.dirty = true; }
+    }
+    if (this.s.host && this.s.hostLeftAt === null && !live.has(this.s.host)) { this.s.hostLeftAt = now; this.dirty = true; }
+    if (this.dirty) this.syncPause(now);
+    return drop;
+  }
+
   /** Earliest time the adapter should call alarm(), or null. */
   nextAlarm(): number | null {
     let t = Infinity;
@@ -506,7 +534,9 @@ export class RoomCore {
         if (!name) return this.err(key, 'name');
         if (s.phase === 'playing' && seat !== null) return this.err(key, 'not_lobby');
         if (this.nameBanned(name, now)) return this.err(key, 'banned');
-        for (const other of this.connectedSids()) {
+        // Offline seated players (held seat) keep their name reserved too (M3).
+        const holders = new Set([...this.connectedSids(), ...s.seats.flatMap((r) => (r && !r.open ? [r.sid] : []))]);
+        for (const other of holders) {
           if (other !== sid && this.s.people[other]?.named && sameName(this.nameOf(other), name)) return this.err(key, 'name_taken');
         }
         me.name = name;

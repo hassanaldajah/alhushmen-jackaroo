@@ -92,7 +92,10 @@ export class SceneBridge implements SceneHost, HintSource {
   private off: () => void;
 
   constructor(private net: Net) {
-    this.off = net.on('hint', (m) => { this.plays = m.plays; if (this.sel) this.selectCard(this.sel); });
+    const offHint = net.on('hint', (m) => { this.plays = m.plays; if (this.sel) this.selectCard(this.sel); });
+    // A hint reply lost in a reconnect must be re-requested for the same turn.
+    const offStatus = net.on('status', (s) => { if (s === 'open') this.hintKey = ''; }); // the fresh view after open asks again
+    this.off = () => { offHint(); offStatus(); };
   }
 
   mount(container: HTMLElement): void {
@@ -186,7 +189,9 @@ export class SceneBridge implements SceneHost, HintSource {
     if (!card) { this.promptCb(null); return; }
     const c = this.cands();
     if (!c.length) { this.promptCb(this.plays.length ? T.noMoves : null); return; }
-    if (c.every(isDiscard)) { this.emit(c); return; }
+    // No marble to pick (discard only, or a 10 whose only legal play is burn): offer the options directly,
+    // otherwise a burn-only hand could never be sent (deadlock).
+    if (c.every((p) => firstMarble(p) === undefined)) { this.emit(c); return; }
     this.promptCb(T.pickMarble);
   }
 

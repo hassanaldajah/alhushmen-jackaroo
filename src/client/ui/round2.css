@@ -127,3 +127,28 @@ body, h1, h2, h3, button, input { font-weight: 600; }
   .screen { padding-inline: calc(var(--sp-5) + var(--safe-s)) calc(var(--sp-5) + var(--safe-e)); }
 }
 @media (min-width: 768px) { .scrim.side .sheet { padding-inline: var(--sp-5); } }
+
+/* Gold pass: no green in the UI. Warm gold + brown backgrounds; speaking / live states use bright gold. */
+.screen { background:
+  radial-gradient(90% 60% at 0% 0%, rgba(232,207,138,.30), transparent 70%),
+  radial-gradient(90% 60% at 100% 100%, rgba(143,111,42,.45), transparent 70%),
+  linear-gradient(160deg, #5B4216 0%, #3A2A0F 55%, var(--wood-800) 100%); }
+.screen .person .avatar, .person .avatar { background: var(--felt-700); color: var(--brass-300); }
+.table { background: radial-gradient(120% 90% at 50% 40%, #6B4E1A, var(--felt-700)); }
+
+/* Left dock: mic + chat always within thumb reach, never at the bottom. */
+.dock { position: fixed; z-index: 12; left: calc(var(--sp-2) + var(--safe-s)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: var(--sp-3); align-items: center; }
+.dock[hidden] { display: none; }
+.dock-mic { position: relative; width: 60px; height: 60px; border-radius: 50%; border: 3px solid var(--brass-300); display: grid; place-items: center; align-content: center; gap: 0; background: var(--ruby-500); color: var(--cream-50); box-shadow: var(--sh-3); font-family: var(--font); }
+.dock-mic .ic { width: 26px; height: 26px; }
+.dock-lbl { font-size: 10px; line-height: 12px; }
+.dock-mic.live { background: linear-gradient(180deg, var(--brass-300), var(--brass-500)); color: var(--ink-900); }
+.dock-mic.connecting { background: var(--wood-700); border-style: dashed; }
+.dock-mic.denied { background: var(--wood-700); border-color: var(--warn-500); }
+.dock-mic.speaking { box-shadow: 0 0 0 4px var(--brass-300), var(--sh-3); }
+.dock-chat { position: relative; width: 52px; height: 52px; border-radius: 50%; border: 2px solid var(--brass-500); background: rgba(43,29,18,.88); color: var(--brass-300); display: grid; place-items: center; box-shadow: var(--sh-2); }
+.dock-badge { position: absolute; top: -4px; inset-inline-end: -4px; background: var(--ruby-500); color: #fff; min-width: 20px; text-align: center; }
+/* The rail sits above the dock, on the same side. */
+.rail { inset-inline-end: auto; left: var(--sp-2); }
+@media (max-width: 479px) { .rail { top: calc(var(--status-h) + var(--safe-t) + var(--sp-1)); } .rail .rail-btn { width: 40px; height: 40px; min-width: 40px; min-height: 40px; } }
+@media (min-width: 768px) { .dock { left: var(--sp-5); } .rail { left: var(--sp-5); } }

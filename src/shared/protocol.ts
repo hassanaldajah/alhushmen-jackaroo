@@ -43,7 +43,7 @@ export const JOKE_COUNT = 60;
 export const HOST_VOTE_MS = 30_000;
 export const HOST_VOTE_COOLDOWN_MS = 60_000;
 /** A disconnected host keeps the crown this long, then the claim reopens. */
-export const HOST_GRACE_MS = 15_000;
+export const HOST_GRACE_MS = 5 * 60_000;
 /** Saved game history retention (about 6 months) and hard row cap. */
 export const HISTORY_MS = 183 * 24 * 60 * 60 * 1000;
 export const HISTORY_MAX = 2000;

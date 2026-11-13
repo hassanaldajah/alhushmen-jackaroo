@@ -14,6 +14,18 @@ export class Emitter {
   }
 }
 
+/** Per-tab id: sessionStorage survives a refresh but is never shared with other tabs, so each tab is its own player. */
+function tabId(): string {
+  try {
+    let t = sessionStorage.getItem('tab');
+    if (!t || !/^[0-9a-f]{16}$/.test(t)) {
+      t = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
+      sessionStorage.setItem('tab', t);
+    }
+    return t;
+  } catch { return Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join(''); }
+}
+
 /** Real network client: HTTP for gate/search/ice, WebSocket for the room. */
 export class WsNet extends Emitter implements Net {
   private ws: WebSocket | null = null;
@@ -21,6 +33,8 @@ export class WsNet extends Emitter implements Net {
   private timer = 0;
   private lostTimer = 0;
   private closed = false;
+  private pongTimer = 0;
+  private livenessOn = false;
 
   async gate(pass: string): Promise<GateReply> {
     try {
@@ -36,17 +50,65 @@ export class WsNet extends Emitter implements Net {
     } catch { return { ok: false, net: true }; }
   }
 
+  async hasSession(): Promise<boolean> {
+    try { return (await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' })).ok; } catch { return false; }
+  }
+
+  /** Detach and close the current socket so its late events can never reach the app (H3). */
+  private dropSocket(): void {
+    const old = this.ws;
+    this.ws = null;
+    clearTimeout(this.pongTimer); this.pongTimer = 0;
+    if (!old) return;
+    old.onopen = null; old.onmessage = null; old.onclose = null; old.onerror = null;
+    try { old.close(); } catch { /* already closed */ }
+  }
+
+  /** Liveness (H4): ping every 25 s and on resume/online; no pong within 3 s means a zombie socket, reconnect. */
+  private installLiveness(): void {
+    if (this.livenessOn) return;
+    this.livenessOn = true;
+    const check = () => { if (!this.closed && document.visibilityState !== 'hidden') this.probe(); };
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('pageshow', check);
+    window.addEventListener('online', check);
+    window.setInterval(check, 25_000);
+  }
+
+  private probe(): void {
+    const ws = this.ws;
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      // Dead socket without a pending retry (e.g. the close event never fired while backgrounded).
+      if (!this.timer) this.retryNow();
+      return;
+    }
+    if (ws.readyState !== WebSocket.OPEN || this.pongTimer) return;
+    ws.send(JSON.stringify({ t: 'ping' } satisfies ClientMsg));
+    this.pongTimer = window.setTimeout(() => {
+      this.pongTimer = 0;
+      if (ws === this.ws && !this.closed) this.retryNow();
+    }, 3_000);
+  }
+
   connect(): void {
     this.closed = false;
+    clearTimeout(this.timer); this.timer = 0;
+    this.dropSocket(); // never two live sockets
+    this.installLiveness();
     this.emit('status', this.tries ? 'retrying' : 'connecting');
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/api/ws`);
+    const ws = new WebSocket(`${proto}://${location.host}/api/ws?t=${tabId()}`);
     this.ws = ws;
-    ws.onopen = () => { this.tries = 0; clearTimeout(this.lostTimer); this.emit('status', 'open'); };
+    ws.onopen = () => {
+      if (ws !== this.ws) return;
+      this.tries = 0; clearTimeout(this.lostTimer); this.lostTimer = 0; this.emit('status', 'open');
+    };
     ws.onmessage = (e) => {
+      if (ws !== this.ws) return;
       if (typeof e.data !== 'string' || e.data.length > MAX_MSG_BYTES * 8) return;
       let m: { t?: string } & Record<string, unknown>;
       try { m = JSON.parse(e.data); } catch { return; }
+      if (m.t === 'pong') { clearTimeout(this.pongTimer); this.pongTimer = 0; return; }
       if (m.t === 'view') this.emit('view', m.view as never);
       else if (m.t === 'signal') this.emit('signal', { from: String(m.from), data: m.data });
       else if (m.t === 'event') this.emit('event', m as never);
@@ -59,20 +121,23 @@ export class WsNet extends Emitter implements Net {
       else if (m.t === 'error') this.emit('error', { code: String(m.code), detail: typeof m.detail === 'string' ? m.detail : undefined });
     };
     ws.onclose = (e) => {
-      if (this.closed) return;
-      if (e.code === CLOSE_AUTH) { this.emit('status', 'expired'); return; }
-      if (e.code === CLOSE_FULL) { this.emit('status', 'full'); return; }
-      if (e.code === CLOSE_KICKED) { this.emit('status', 'kicked'); return; }
-      if (e.code === CLOSE_REPLACED) { this.emit('status', 'replaced'); return; }
+      if (ws !== this.ws || this.closed) return;
+      this.ws = null;
+      clearTimeout(this.pongTimer); this.pongTimer = 0;
+      const end = (s: 'expired' | 'full' | 'kicked' | 'replaced') => { this.closed = true; clearTimeout(this.lostTimer); this.lostTimer = 0; this.emit('status', s); };
+      if (e.code === CLOSE_AUTH) { end('expired'); return; }
+      if (e.code === CLOSE_FULL) { end('full'); return; }
+      if (e.code === CLOSE_KICKED) { end('kicked'); return; }
+      if (e.code === CLOSE_REPLACED) { end('replaced'); return; }
       this.tries++;
       this.emit('status', 'retrying');
-      clearTimeout(this.lostTimer);
-      this.lostTimer = window.setTimeout(() => this.emit('status', 'lost'), 30000);
-      this.timer = window.setTimeout(() => this.connect(), Math.min(10000, 500 * 2 ** this.tries));
+      // The "lost" banner counts from the first failure, not from every retry.
+      if (!this.lostTimer) this.lostTimer = window.setTimeout(() => this.emit('status', 'lost'), 30000);
+      this.timer = window.setTimeout(() => { this.timer = 0; this.connect(); }, Math.min(10000, 500 * 2 ** this.tries));
     };
   }
 
-  retryNow(): void { clearTimeout(this.timer); this.tries = 0; this.connect(); }
+  retryNow(): void { clearTimeout(this.timer); this.timer = 0; this.tries = 0; this.connect(); }
 
   send(m: ClientMsg): void {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(m));
@@ -102,5 +167,5 @@ export class WsNet extends Emitter implements Net {
     } catch { return [stun]; }
   }
 
-  close(): void { this.closed = true; clearTimeout(this.timer); this.ws?.close(); }
+  close(): void { this.closed = true; clearTimeout(this.timer); this.timer = 0; clearTimeout(this.lostTimer); this.lostTimer = 0; this.dropSocket(); }
 }

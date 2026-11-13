@@ -4,6 +4,7 @@ import { sfx } from '../audio/sfx';
 import { h, clear } from './dom';
 import { T } from './ar';
 import { mountGate } from './gate';
+import { createDock } from './dock';
 import { playIntro } from './intro';
 import { renderLobby, setNameError } from './lobby';
 import { Table } from './table';
@@ -37,7 +38,10 @@ export function startApp(root: HTMLElement, net: Net): void {
   let lastMusicAt = 0;
   const voice = new VoiceMesh(net);
   const chat = new Chat(net, () => view?.you.id ?? '');
-  chat.onUnread = (n) => table?.setUnread(n);
+  const dock = createDock(() => micToggle(), () => chat.show());
+  document.body.append(dock.el);
+  dock.setMic('listen', false);
+  chat.onUnread = (n) => { table?.setUnread(n); dock.setUnread(n); };
 
   // First user tap unlocks audio (autoplay policy).
   const unlock = () => { sfx.unlock(); };
@@ -51,10 +55,13 @@ export function startApp(root: HTMLElement, net: Net): void {
   };
   voice.onChange = () => {
     table?.setMic(voice.micState, voice.selfSpeaking);
+    dock.setMic(voice.micState, voice.selfSpeaking);
     table?.speaking(speakingIds());
     document.querySelectorAll<HTMLElement>('[data-pid]').forEach((e) => e.classList.toggle('speaking', speakingIds().has(e.dataset.pid ?? '')));
     if (view) voiceSheet?.refresh(view);
   };
+  voice.onBlocked = (b) => { if (b) toast('اضغط على الشاشة لتسمع أصوات اللاعبين'); };
+  addEventListener('pointerdown', () => voice.unlock());
   voice.onSpeaking = (any) => { sfx.duck(any); music?.player.duck(any); };
   // Voice may fail on some networks: point people to the chat/fallback once, after a grace period.
   window.setInterval(() => {
@@ -62,11 +69,9 @@ export function startApp(root: HTMLElement, net: Net): void {
   }, 5000);
 
   const micToggle = () => {
-    if (!voicePrompted && voice.micState === 'listen') {
-      voicePrompted = true;
-      openVoicePrompt(() => void voice.enableMic(), () => { /* listen only */ });
-      return;
-    }
+    voice.unlock();
+    // One tap = ask for the mic straight away (the tap itself is the user gesture the browser needs).
+    if (voice.micState === 'listen') { voicePrompted = true; void voice.enableMic(); return; }
     if (voice.micState === 'denied') { toast(T.micDenied, true); return; }
     voice.toggle();
   };
@@ -134,7 +139,7 @@ export function startApp(root: HTMLElement, net: Net): void {
   };
 
   net.on('view', (v) => {
-    view = v; ensureVoice(v);
+    view = v; ensureVoice(v); dock.show(true);
     show(v);
     music?.update(v);
     songs?.refresh();
@@ -180,5 +185,8 @@ export function startApp(root: HTMLElement, net: Net): void {
   });
 
   function begin(): void { net.connect(); }
-  playIntro(root, () => mountGate(root, net, begin));
+  playIntro(root, () => {
+    // A valid 12 h login cookie means a refresh goes straight in; otherwise show the passphrase gate.
+    void (net.hasSession?.() ?? Promise.resolve(false)).then((ok) => { if (ok) begin(); else mountGate(root, net, begin); });
+  });
 }

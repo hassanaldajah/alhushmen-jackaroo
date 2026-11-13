@@ -99,7 +99,11 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   if (path === '/api/ws') {
     if (req.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ ok: false }, 426);
     if (!originAllowed(req, env)) return json({ ok: false }, 403);
-    const headers = new Headers({ Upgrade: 'websocket', 'X-Sid': s.sid });
+    // Each browser tab is its own player (a tab id lives in sessionStorage: survives refresh, never shared between tabs).
+    // Identity = login sid (first 16 hex) + tab id (16 hex), still 32 hex. A forged tab id only affects the caller's own login.
+    const tab = url.searchParams.get('t') ?? '';
+    const sid = /^[0-9a-f]{16}$/.test(tab) ? s.sid.slice(0, 16) + tab : s.sid;
+    const headers = new Headers({ Upgrade: 'websocket', 'X-Sid': sid });
     return room(env).fetch(new Request('https://room/internal/ws', { headers }));
   }
 

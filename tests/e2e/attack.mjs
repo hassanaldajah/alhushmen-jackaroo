@@ -8,7 +8,7 @@ const WebSocket = require('ws');
 const BASE = process.env.QA_BASE || 'http://localhost:8799';
 if (!/^http:\/\/(localhost|127\.0\.0\.1):/.test(BASE)) throw new Error('refusing non-local target');
 const PASS = process.env.QA_PASS;
-const ORIGIN = 'http://localhost:8799';
+const ORIGIN = process.env.QA_ORIGIN || 'http://localhost:8799';
 const res = [];
 const rec = (name, ok, detail) => { res.push({ name, ok, detail }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' :: ' + detail : '')); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

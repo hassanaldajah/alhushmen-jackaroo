@@ -13,7 +13,7 @@ import { RoomCore, emptyRoom, type GameStore, type Out, type RoomState } from '.
 import { frameTooBig, parseClientMsg } from './validate';
 import { iceServers, type TurnixCache } from './ice';
 import { YT_CACHE_MS, YT_DAILY_CAP, YT_PER_USER_PER_MIN, normalizeQuery, ytSearch, ytVideo } from './youtube';
-import { HISTORY_MAX, HISTORY_MS, VIDEO_ID_RE, type GameRecord, type SearchResult } from '../shared/protocol';
+import { CLOSE_KICKED, HISTORY_MAX, HISTORY_MS, VIDEO_ID_RE, type GameRecord, type SearchResult } from '../shared/protocol';
 import type { Env } from './env';
 
 interface Attachment { key: string; sid: string; muted: boolean }
@@ -51,11 +51,20 @@ export class GameRoom extends DurableObject<Env> {
         videoMeta: (id) => this.meta(id),
         store: this.gameStore(),
       });
-      // Rebuild connections after hibernation.
-      for (const ws of ctx.getWebSockets()) {
+      // Rebuild connections after hibernation/restart. Sockets the server already closed carry a null
+      // attachment; banned sids are dropped (M4). Seats/host with no socket start their hold timers (H2).
+      const sockets = ctx.getWebSockets();
+      const conns = sockets.flatMap((ws) => {
         const a = ws.deserializeAttachment() as Attachment | null;
-        if (a) this.core.conns.set(a.key, { key: a.key, sid: a.sid, muted: a.muted });
+        return a ? [{ key: a.key, sid: a.sid, muted: a.muted }] : [];
+      });
+      const drop = new Set(this.core.restore(conns, Date.now()));
+      for (const ws of sockets) {
+        const a = ws.deserializeAttachment() as Attachment | null;
+        if (!a || !drop.has(a.key)) continue;
+        try { ws.serializeAttachment(null); ws.close(CLOSE_KICKED, 'kicked'); } catch { /* already closed */ }
       }
+      await this.persist();
     });
   }
 
@@ -118,6 +127,8 @@ export class GameRoom extends DurableObject<Env> {
     for (const o of outs) {
       if ('close' in o) {
         for (const ws of this.ctx.getWebSockets(o.close)) {
+          // The core already dropped this conn; a null attachment keeps it from being revived after hibernation (M4).
+          try { ws.serializeAttachment(null); } catch { /* noop */ }
           try { ws.close(o.code, o.reason); } catch { /* already closed */ }
         }
         continue;
@@ -260,8 +271,10 @@ export class GameRoom extends DurableObject<Env> {
   override async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     const a = ws.deserializeAttachment() as Attachment | null;
     if (!a || !this.core.conns.has(a.key)) { try { ws.close(4401, 'unknown'); } catch { /* noop */ } return; }
-    const msg = frameTooBig(raw) ? null : parseClientMsg(raw);
     const big = frameTooBig(raw);
+    let msg: ReturnType<typeof parseClientMsg> = null;
+    // A parser exception is counted as a bad frame (rate/abuse limits still apply), never escapes (M1).
+    if (!big) { try { msg = parseClientMsg(raw); } catch { msg = null; } }
     // Unknown video ids (not from our search cache) are looked up via videos.list (1 quota unit), but only
     // after the per-user YouTube limit and the global daily cap pass, and failures are negative-cached (M2).
     if (msg?.t === 'qAdd' && VIDEO_ID_RE.test(msg.videoId) && !this.meta(msg.videoId) && this.env.YT_API_KEY) {

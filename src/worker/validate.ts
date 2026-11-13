@@ -115,7 +115,9 @@ export function parseClientMsg(raw: string | ArrayBuffer): ClientMsg | null {
   let x: unknown;
   try { x = JSON.parse(raw); } catch { return null; }
   if (!isObj(x) || typeof x.t !== 'string') return null;
-  if (!onlyKeys(x, ['t', ...(KEYS[x.t] ?? [])])) return null;
+  // Own keys only: "constructor"/"__proto__"/"toString" must not hit Object.prototype (M1).
+  const extra = Object.prototype.hasOwnProperty.call(KEYS, x.t) ? KEYS[x.t]! : [];
+  if (!onlyKeys(x, ['t', ...extra])) return null;
   if (BARE.includes(x.t)) return { t: x.t } as ClientMsg;
   switch (x.t) {
     case 'name': return typeof x.name === 'string' ? { t: 'name', name: x.name } : null;

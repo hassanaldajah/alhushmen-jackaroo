@@ -62,14 +62,19 @@ export class MusicPlayer {
         events: {
           onReady: () => { this.player?.setVolume(this.eff()); if (this.paused) this.player?.pauseVideo(); else this.player?.playVideo(); },
           onStateChange: (e: { data: number }) => {
-            if (e.data === 0 && this.current) this.net.send({ t: 'qEnded', itemId: this.current.id });
+            if (e.data === 0 && this.current) {
+              const id = this.current.id;
+              this.net.send({ t: 'qEnded', itemId: id });
+              // The server ignores "ended" within 5 s of start (anti-skip guard); a very short video re-reports once (L4).
+              setTimeout(() => { if (this.current?.id === id) this.net.send({ t: 'qEnded', itemId: id }); }, 5_500);
+            }
             if (e.data === -1 || e.data === 5) { this.needsTap = true; this.onState(); }
             if (e.data === 1) { this.needsTap = false; this.onState(); }
           },
           onError: () => {
             this.error = true; this.onState();
             const id = this.current?.id; // not embeddable: auto-skip after 3 s
-            setTimeout(() => { if (id && this.current?.id === id) this.net.send({ t: 'qEnded', itemId: id }); }, 3000);
+            setTimeout(() => { if (id && this.current?.id === id) this.net.send({ t: 'qError', itemId: id }); }, 3000);
           },
         },
       });

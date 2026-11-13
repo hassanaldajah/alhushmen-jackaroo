@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { randomHex } from '../../src/worker/auth';
 import {
-  BAD_PER_10S, RoomCore, buildScoreboard, emptyRoom, expectedFrom, memoryStore, type GameStore, type Out,
+  BAD_PER_10S, RoomCore, SEAT_HOLD_MS, buildScoreboard, emptyRoom, expectedFrom, memoryStore, type GameStore, type Out,
 } from '../../src/worker/core';
 import { cleanName, parseClientMsg } from '../../src/worker/validate';
 import { seededRng } from '../../src/engine/rng';
@@ -355,12 +355,13 @@ describe('game end, result, scoreboard, expected duration', () => {
     const core = readyTable();
     send(core, 'k0', { t: 'start' }, 2000);
     core.disconnect('k2', 3000);
-    core.alarm(3000 + 60_000); // seat opens, game pauses at 63000
-    expect(view(core, 'k0', 70_000).clock).toMatchObject({ paused: true, elapsedMs: 61_000 });
-    core.connect('sp', randomHex(16), 80_000);
-    send(core, 'sp', { t: 'name', name: 'SP' }, 80_000);
-    send(core, 'sp', { t: 'sit', seat: 2 }, 80_000);
-    expect(view(core, 'k0', 90_000).clock).toMatchObject({ paused: false, elapsedMs: 61_000 + 10_000 });
+    const open = 3000 + SEAT_HOLD_MS; // seat opens after the hold, game pauses then
+    core.alarm(open);
+    expect(view(core, 'k0', open + 7000).clock).toMatchObject({ paused: true, elapsedMs: open - 2000 });
+    core.connect('sp', randomHex(16), open + 17_000);
+    send(core, 'sp', { t: 'name', name: 'SP' }, open + 17_000);
+    send(core, 'sp', { t: 'sit', seat: 2 }, open + 17_000);
+    expect(view(core, 'k0', open + 27_000).clock).toMatchObject({ paused: false, elapsedMs: open - 2000 + 10_000 });
   });
 });
 

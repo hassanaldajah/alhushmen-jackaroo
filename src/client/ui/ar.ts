@@ -6,7 +6,7 @@ export const T = {
   name: 'شو اسمك؟', sit: 'اقعد هون', stand: 'قوم', spectate: 'تفرّج', ready: 'جاهز', start: 'ابدأ اللعبة',
   full: 'الغرفة كاملة', nobody: 'ما حدا قاعد. اختر كرسي', noSpec: 'ما في متفرجين', spectators: 'المتفرجين',
   teamA: 'فريق أ', teamB: 'فريق ب', disconnected: 'غير متصل', you: 'انت', save: 'احفظ', leave: 'رجوع للّوبي',
-  turnYou: 'دورك', turnOther: (n: string) => `دور ${n}`, waitingDeal: 'بانتظار التوزيع',
+  turnYou: 'دورك', turnOther: (n: string) => `دور ${n}`, waitingFor: (n: string) => `بانتظار ${n} يرجع (اللعبة موقّفة)`, seatOpenWait: 'في مقعد فاضي، اللعبة موقّفة', waitingDeal: 'بانتظار التوزيع',
   confirm: 'تأكيد', cancel: 'إلغاء', hint: 'وريني الحركات', spectatorLabel: 'متفرج',
   cardsCount: (n: number) => `${n} ورقة`, dealt: (n: number) => `وزّعنا الورق. عندك ${n} ورقة`,
   illegal: 'هاي الحركة مش مسموحة', notTurn: 'مش دورك', pickCard: 'اختر ورقة',

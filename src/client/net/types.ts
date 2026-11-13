@@ -29,6 +29,8 @@ export interface ServerEvents {
 export interface Net {
   on<K extends keyof ServerEvents>(k: K, f: (v: ServerEvents[K]) => void): () => void;
   gate(pass: string): Promise<GateReply>;
+  /** True when the browser already holds a valid login cookie (refresh keeps you in). */
+  hasSession?(): Promise<boolean>;
   connect(): void;
   send(m: ClientMsg): void;
   search(q: string): Promise<SearchReply>;

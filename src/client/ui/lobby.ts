@@ -74,7 +74,7 @@ interface Person { id: string; name: string; seat: number | null; connected: boo
 export function renderLobby(root: HTMLElement, v: RoomView, net: Net, ctx: LobbyCtx): void {
   if (!v.you.named) {
     // Saved name: join straight away once; if the server rejects it the form shows with the reason.
-    if (ctx.remembered && !nameError && !autoTried) { autoTried = true; ctx.setName(ctx.remembered, localStorage.getItem('role') === 's'); return; }
+    if (ctx.remembered && !nameError && !autoTried) { autoTried = true; let spec = false; try { spec = localStorage.getItem('role') === 's'; } catch { /* storage blocked */ } ctx.setName(ctx.remembered, spec); return; }
     nameScreen(root, ctx); return;
   }
   const me = v.you.seat !== null ? v.seats[v.you.seat]! : null;

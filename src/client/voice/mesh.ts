@@ -82,11 +82,25 @@ export class VoiceMesh {
   /** True when at least one other person is in the room but no voice link is connected yet. */
   get noneConnected(): boolean { return this.peers.size > 0 && ![...this.peers.values()].some((p) => p.status === 'connected'); }
 
+  /** Browsers block audio without a recent tap; remember that and retry on the next tap. */
+  blocked = false;
+  onBlocked: (b: boolean) => void = () => {};
+  private playAudio(a: HTMLAudioElement): void {
+    a.play().then(() => { if (this.blocked) { this.blocked = [...this.links.values()].some((l) => l.audio.paused && l.audio.srcObject); this.onBlocked(this.blocked); } })
+      .catch(() => { this.blocked = true; this.onBlocked(true); });
+  }
+  /** Call on any user tap: resumes the audio context and plays every remote stream. */
+  unlock(): void {
+    if (this.ctx) void this.ctx.resume();
+    for (const l of this.links.values()) if (l.audio.srcObject && l.audio.paused) this.playAudio(l.audio);
+  }
+
   private ensureCtx(): void { this.ctx ??= new AudioContext(); void this.ctx.resume(); }
 
   private open(id: string): void {
     const pc = new RTCPeerConnection({ iceServers: this.ice });
-    const audio = new Audio(); audio.autoplay = true;
+    const audio = new Audio(); audio.autoplay = true; audio.setAttribute('playsinline', '');
+    audio.style.display = 'none'; document.body.append(audio); // iOS plays remote streams more reliably when attached
     const link: Link = { pc, audio, polite: this.selfId > id, failed: false, makingOffer: false, ignoreOffer: false };
     this.links.set(id, link);
     this.peers.set(id, { id, status: 'connecting', speaking: false, remoteMuted: false, failed: false, quality: 'good', volume: 100, localMuted: false });
@@ -100,7 +114,7 @@ export class VoiceMesh {
     };
     pc.ontrack = (e) => {
       audio.srcObject = e.streams[0] ?? new MediaStream([e.track]);
-      void audio.play().catch(() => {});
+      this.playAudio(audio);
       this.ensureCtx();
       link.analyser = this.ctx!.createAnalyser(); link.analyser.fftSize = 512;
       this.ctx!.createMediaStreamSource(audio.srcObject as MediaStream).connect(link.analyser);
@@ -118,7 +132,7 @@ export class VoiceMesh {
 
   private close(id: string): void {
     const l = this.links.get(id); if (!l) return;
-    l.pc.close(); l.audio.srcObject = null;
+    l.pc.close(); l.audio.srcObject = null; l.audio.remove();
     this.links.delete(id); this.peers.delete(id);
   }
 
