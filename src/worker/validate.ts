@@ -78,7 +78,7 @@ const KEYS: Record<string, string[]> = {
   signal: ['to', 'data'], hostVote: ['choice'], hostGive: ['to'], partnerReq: ['to'], partnerAnswer: ['from', 'accept'],
   chat: ['text'], swapReq: ['to'], swapAnswer: ['from', 'accept'], qSkip: ['itemId'], qPause: ['paused'], qPlay: ['id'],
 };
-const BARE = ['stand', 'spectate', 'start', 'hint', 'again', 'toLobby', 'ping', 'hostClaim', 'hostVoteStart',
+const BARE = ['stand', 'spectate', 'start', 'hint', 'again', 'toLobby', 'leave', 'ping', 'hostClaim', 'hostVoteStart',
   'partnerCancel', 'partnerBreak', 'shuffleTeams', 'swapCancel', 'scoreboard', 'qStop'];
 const isId = (x: unknown): x is string => isStr(x, 16) && ID_RE.test(x);
 

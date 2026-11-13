@@ -72,4 +72,35 @@ describe('old unfinished game is dropped (new game / empty room)', () => {
     core.alarm(5000 + IDLE_RESET_MS + 5);
     expect(core.s.phase).toBe('playing');
   });
+
+  it('the last person to log out deletes the unfinished game at once', () => {
+    const { core, send } = table();
+    send('k0', { t: 'start' }, 2000);
+    expect(core.s.phase).toBe('playing');
+    for (const k of ['k1', 'k2', 'k3']) core.disconnect(k, 3000);
+    const out = send('k0', { t: 'leave' }, 4000);
+    expect(out).toContainEqual({ close: 'k0', code: 1000, reason: 'left' });
+    expect(core.s.phase).toBe('lobby');
+    expect(core.s.game).toBeNull();
+    expect(core.s.seats.every((r) => r === null)).toBe(true);
+  });
+
+  it('logout while others are still in keeps the game; the seat opens and the host role is freed', () => {
+    const { core, send } = table();
+    send('k0', { t: 'start' }, 2000);
+    send('k1', { t: 'leave' }, 3000);
+    expect(core.s.phase).toBe('playing');
+    expect(core.conns.has('k1')).toBe(false);
+    expect(core.s.seats[1]?.open).toBe(true);
+    send('k0', { t: 'leave' }, 3500); // host leaves too
+    expect(core.s.host).toBeNull();
+    expect(core.s.phase).toBe('playing');
+  });
+
+  it('logout in the lobby just frees the seat', () => {
+    const { core, send } = table();
+    send('k2', { t: 'leave' }, 2000);
+    expect(core.s.phase).toBe('lobby');
+    expect(core.s.seats[2]).toBeNull();
+  });
 });

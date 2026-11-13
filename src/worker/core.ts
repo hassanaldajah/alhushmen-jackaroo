@@ -609,6 +609,36 @@ export class RoomCore {
         return this.changed(now, out);
       }
 
+      case 'leave': {
+        // Explicit logout: free the seat and host role now and drop this person's sockets.
+        const out: Out[] = [];
+        const events: GameEvent[] = [];
+        if (seat !== null) {
+          const r = s.seats[seat];
+          if (s.phase === 'playing' && r && !r.open) {
+            r.open = true; r.leftAt = now;
+            events.push({ kind: 'pause', seat });
+          } else {
+            out.push(...this.breakPair(sid));
+            s.seats[seat] = null;
+          }
+        }
+        if (isHost) {
+          const name = this.nameOf(sid);
+          s.host = null; s.hostLeftAt = null;
+          out.push(...this.noticeAll('host_left', name));
+        }
+        for (const c of this.connsOfSid(sid)) {
+          this.conns.delete(c.key);
+          out.push({ close: c.key, code: 1000, reason: 'left' });
+        }
+        this.musicRate.delete(sid); this.chatRate.delete(sid);
+        // The last person out: the unfinished game is deleted at once (a finished game's result is already saved).
+        if (this.conns.size === 0) { s.idleSince = now - IDLE_RESET_MS; this.idleReset(now); }
+        else if (events.length) out.push(...this.broadcast({ t: 'event', kind: 'pause', events }));
+        return this.changed(now, out);
+      }
+
       case 'stand':
       case 'spectate':
         if (seat === null) return [];

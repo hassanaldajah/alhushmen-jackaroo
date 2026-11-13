@@ -304,6 +304,8 @@ export type ClientMsg =
   | { t: 'again' }
   /** Host: back to lobby (ends current game). */
   | { t: 'toLobby' }
+  /** Explicit logout/exit: free my seat and host role now; when I was the last person the unfinished game is deleted. */
+  | { t: 'leave' }
   // ---- host (no pre-assigned host; first processed claim wins)
   | { t: 'hostClaim' }
   /** Open a change-host vote (one at a time, cooldown after a failed one). */

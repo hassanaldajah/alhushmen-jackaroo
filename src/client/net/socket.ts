@@ -56,6 +56,8 @@ export class WsNet extends Emitter implements Net {
 
   /** Same-origin POST (the browser adds the Origin header the server checks); the reply clears the cookie. */
   async logout(): Promise<boolean> {
+    // Tell the room first so my seat is freed (and the unfinished game deleted if I am the last one out).
+    try { if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ t: 'leave' })); } catch { /* socket already gone */ }
     this.close();
     try { return (await fetch('/api/logout', { method: 'POST', credentials: 'same-origin', cache: 'no-store' })).ok; } catch { return false; }
   }
