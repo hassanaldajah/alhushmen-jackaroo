@@ -39,6 +39,12 @@ async function session(req: Request, env: Env): Promise<Session | null> {
   return verifySession(tok, env.SESSION_SECRET, Date.now());
 }
 
+async function tabSid(tab: string, secret: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode('tab:' + tab)));
+  return Array.from(mac.slice(0, 16), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 function room(env: Env): DurableObjectStub {
   return env.ROOM.get(env.ROOM.idFromName(ROOM_NAME));
 }
@@ -99,10 +105,11 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   if (path === '/api/ws') {
     if (req.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ ok: false }, 426);
     if (!originAllowed(req, env)) return json({ ok: false }, 403);
-    // Each browser tab is its own player (a tab id lives in sessionStorage: survives refresh, never shared between tabs).
-    // Identity = login sid (first 16 hex) + tab id (16 hex), still 32 hex. A forged tab id only affects the caller's own login.
+    // Each browser tab is its own player. The tab id lives in sessionStorage (survives a refresh and the passphrase
+    // being typed again, never shared between tabs). Identity = HMAC(secret, tab id): stable across logins, unguessable
+    // for other players, and bound to the server secret. Without a valid tab id the login session id is used.
     const tab = url.searchParams.get('t') ?? '';
-    const sid = /^[0-9a-f]{16}$/.test(tab) ? s.sid.slice(0, 16) + tab : s.sid;
+    const sid = /^[0-9a-f]{16}$/.test(tab) ? await tabSid(tab, env.SESSION_SECRET!) : s.sid;
     const headers = new Headers({ Upgrade: 'websocket', 'X-Sid': sid });
     return room(env).fetch(new Request('https://room/internal/ws', { headers }));
   }

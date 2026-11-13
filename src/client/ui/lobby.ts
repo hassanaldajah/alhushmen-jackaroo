@@ -42,6 +42,7 @@ export interface LobbyCtx {
   setName(n: string, asSpectator: boolean): void;
   openScore(): void;
   openChat(): void;
+  joke(): void;
   openMenu(): void;
   logout(): void;
   remembered: string | null;
@@ -151,8 +152,14 @@ export function renderLobby(root: HTMLElement, v: RoomView, net: Net, ctx: Lobby
   const list = h('ul', { class: 'list', 'aria-label': T.people }, ...people.map(row));
 
   const mins = Math.max(1, Math.round(v.clock.expectedMs / 60000));
-  const startBtn = button(T.start, 'btn-primary', () => net.send({ t: 'start' }));
+  const startBtn = button(T.start, 'btn-primary btn-big', () => net.send({ t: 'start' }));
   if (!v.canStart) { startBtn.disabled = true; startBtn.setAttribute('aria-disabled', 'true'); }
+  // Always-visible start bar (sticks to the bottom of the screen): the host sees START; everyone else sees what to do.
+  const startBar = h('div', { class: 'startbar' },
+    v.you.host ? startBtn
+      : v.hostId === null ? button(T.claimHost, 'btn-primary btn-big', () => net.send({ t: 'hostClaim' }), 'crown')
+        : h('div', { class: 'muted wait-host' }, T.waitHost),
+    v.you.host && !v.canStart ? h('div', { class: 'startbar-note' }, T.needTeams + ' - ' + T.needTeamsHow) : null);
 
   clear(root, h('div', { class: 'screen scroll lobby' }, topBar(ctx), h('div', { class: 'center' },
     h('h1', null, T.room),
@@ -161,10 +168,10 @@ export function renderLobby(root: HTMLElement, v: RoomView, net: Net, ctx: Lobby
     me?.paired ? button(T.breakPartner, 'btn-secondary', () => net.send({ t: 'partnerBreak' })) : null,
     h('h2', null, `${T.people}: ${people.length}`, h('span', { class: 'cnt' }, ` (المتصلين: ${online})`)), list,
     h('div', { class: 'muted' }, `${T.expected}: ${T.minutes(mins)}`),
-    !v.canStart ? h('div', { class: 'muted' }, T.needTeams) : null,
     h('div', { class: 'lobby-actions' },
-      v.you.host ? startBtn : h('span', { class: 'muted wait-host' }, T.waitHost),
       v.you.host ? button(T.shuffle, 'btn-secondary', () => confirmSheet(T.shuffleAsk, () => net.send({ t: 'shuffleTeams' }))) : null,
       v.you.seat === null && !v.you.spectator ? button(T.spectate, 'btn-secondary', () => net.send({ t: 'spectate' })) : null,
-      button(T.scoreboard, 'btn-secondary', ctx.openScore, 'bars')))));
+      button(T.jokeAyman, 'btn-secondary', ctx.joke, 'joke'),
+      button(T.scoreboard, 'btn-secondary', ctx.openScore, 'bars'))),
+    startBar));
 }

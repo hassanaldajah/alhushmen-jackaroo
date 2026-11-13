@@ -26,7 +26,7 @@ export const T = {
   nameTitle: 'اسمك في اللعبة', namePh: 'اكتب اسمك', nameGo: 'ادخل', nameBad: 'الاسم مش مقبول، جرّب غيره', nameTaken: 'في حدا بنفس الاسم', nameBanned: 'هالاسم ممنوع مؤقتاً (انطرد). جرّب اسم ثاني أو استنى شوي',
   roleP: 'لاعب', roleS: 'متفرج', stAvail: 'متاح', stReq: 'عندك طلب', stPartner: 'شريكك', stHost: 'مضيف', stWaiting: 'بانتظار الرد',
   askPartner: 'اطلب شريك', cancelReq: 'ألغِ الطلب', accept: 'قبول', decline: 'رفض', empty: 'فاضي', expected: 'المدة المتوقعة', elapsedL: 'مضى',
-  minutes: (n: number) => `~${n} دقيقة`, needTeams: 'لازم فريقين كاملين', shuffle: 'خلط عشوائي', shuffleAsk: 'نخلط الفرق عشوائي؟', yes: 'أيوة', no: 'لا',
+  minutes: (n: number) => `~${n} دقيقة`, needTeams: 'لازم فريقين كاملين', needTeamsHow: '4 لاعبين: كل واحد يقعد ويختار شريكه', shuffle: 'خلط عشوائي', shuffleAsk: 'نخلط الفرق عشوائي؟', yes: 'أيوة', no: 'لا',
   claimHost: 'أنا المضيف', changeHost: 'تغيير المضيف', vote: 'صوّت', keepHost: 'خلّي المضيف الحالي', kick: 'طرد', kickAsk: (n: string) => `نطرد ${n}؟`,
   swapSeat: 'بدّل مكان', breakPartner: 'فك الشراكة', scoreboard: 'النتائج', people: 'الموجودين', waitHost: 'بانتظار المضيف', you2: 'أنت',
   hostSheet: 'اختار المضيف', voteOf: (a: number, b: number) => `${a} من ${b}`, teamsTab: 'الفرق', playersTab: 'اللاعبين', noGames: 'ما في ألعاب محفوظة',
@@ -56,7 +56,7 @@ export const T = {
     '2': 'تتحرك خطوتين',
   } as Record<string, string>)[rank] ?? `تتحرك ${rank} خطوات`,
   // Jokes: the dock button, the silence filler, and the pirate who reads them.
-  jokeBtn: 'نكتة', autoJokes: 'نكت تلقائية', npcName: 'أيمن', npcBadge: 'معدل التراكم 2.7', gag1: 'زوط', gag2: 'لا أمزح معك',
+  jokeBtn: 'نكتة', jokeAyman: 'نكتة من أيمن', autoJokes: 'نكت تلقائية', npcName: 'أيمن', npcBadge: 'معدل التراكم 2.7', gag1: 'زوط', gag2: 'لا أمزح معك',
   connecting: 'عم ندخّلك على الغرفة...', logout: 'تسجيل الخروج', logoutAsk: 'أكيد بدك تطلع؟ رح ترجع لشاشة الكلمة السرّية', loggingOut: 'عم نطلّعك...',
   nHostClaimed: (n: string) => `${n} صار المضيف`, nHostLeft: 'المضيف طلع، مين بدو يصير مضيف؟', nHostChanged: (n: string) => `المضيف الجديد: ${n}`, nHostKept: 'ضل نفس المضيف',
   nPartnerReq: (n: string) => `${n} بدو يكون شريكك`, nPartnerNo: (n: string) => `${n} رفض الطلب`, nPartnerTaken: 'الشريك مأخوذ', nTeam: 'تكوّن الفريق', nTeamBroken: 'انفكّت الشراكة', nShuffled: 'انخلطت الفرق',

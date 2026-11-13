@@ -55,3 +55,29 @@
 .chatline.mine { background: #4A331F; }
 .chattext { overflow-wrap: anywhere; font-size: var(--fs-sm); line-height: var(--lh-sm); }
 .chatline .btn { min-height: 36px; padding-inline: var(--sp-3); font-size: var(--fs-xs); }
+
+/* Real clock (round face + hands + digital time) and the always-visible start bar */
+.clock { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 3px; border-radius: var(--r-pill); background: rgba(0,0,0,.38); border: 1px solid var(--brass-700); direction: ltr; }
+.clock-face { width: 30px; height: 30px; flex: none; }
+.cf-rim { fill: #2b1d12; stroke: var(--brass-300); stroke-width: 2; }
+.cf-tick { stroke: var(--brass-300); stroke-width: 1.6; stroke-linecap: round; }
+.cf-min { stroke: var(--cream-50); stroke-width: 2.6; stroke-linecap: round; }
+.cf-sec { stroke: var(--brass-500); stroke-width: 1.4; stroke-linecap: round; }
+.cf-dot { fill: var(--brass-300); }
+.clock-t { font: 700 15px var(--font); font-variant-numeric: tabular-nums; color: var(--cream-50); letter-spacing: .5px; }
+.status .clock { position: static; margin: 0; background: rgba(0,0,0,.38); display: inline-flex !important; }
+@media (max-width: 374px) { .clock .ex { display: none; } .clock-t { font-size: 13px; } .clock-face { width: 24px; height: 24px; } }
+.startbar { position: sticky; bottom: 0; z-index: 6; margin: var(--sp-4) calc(var(--sp-4) * -1) calc((var(--sp-4) + var(--safe-b)) * -1); padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + var(--safe-b)); background: linear-gradient(180deg, rgba(30,20,13,0), rgba(30,20,13,.92) 30%, #1E140D); display: flex; flex-direction: column; gap: var(--sp-2); align-items: center; }
+.startbar .btn { width: 100%; max-width: 420px; }
+.startbar-note, .startbar .wait-host { font-size: var(--fs-sm); color: var(--cream-200); text-align: center; }
+
+/* Host button in the dock (under the mic) */
+.dock-host { position: relative; width: 52px; min-height: 52px; border-radius: 50%; border: 2px solid var(--brass-500); background: rgba(43,29,18,.88); color: var(--brass-300); display: grid; place-items: center; align-content: center; box-shadow: var(--sh-2); font-family: var(--font); }
+.dock-host .dock-lbl { font-size: 9px; line-height: 10px; max-width: 48px; text-align: center; }
+.dock-host.none { background: linear-gradient(180deg, var(--brass-300), var(--brass-500)); color: var(--ink-900); }
+.dock-host.me { border-color: var(--brass-300); box-shadow: 0 0 0 3px rgba(232,207,138,.35), var(--sh-2); }
+
+/* Bigger, clearer joke buttons: the dock one shows a real label, and a wide one sits at the bottom of the table and the lobby */
+.dock-joke { width: 56px; min-height: 56px; border-radius: 28px; padding: 2px 0; }
+.dock-joke .dock-lbl { font-size: 11px; line-height: 12px; color: var(--brass-300); font-weight: 600; }
+.joke-bottom { border-color: var(--brass-300); color: var(--brass-300); background: rgba(43,29,18,.88); min-width: 0; padding-inline: var(--sp-4); }

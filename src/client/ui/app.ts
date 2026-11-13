@@ -11,7 +11,7 @@ import { Table } from './table';
 import { MusicCard } from './musicCard';
 import { SceneBridge, preloadScene } from './bridge';
 import { Chat } from './chat';
-import { confirmLogout, openHelp, openSettings, openSongs, openVoice } from './sheets';
+import { confirmHostChange, confirmLogout, openHelp, openHostMenu, openSettings, openSongs, openVoice } from './sheets';
 import { openHostVote, openResult, openScoreboard } from './results';
 import { anySheetOpen, button, closeAllSheets, spinner, toast, toastAction } from './widgets';
 import { JokeBag, JokeBubble, autoJokesEnabled } from './joke';
@@ -51,12 +51,22 @@ export function startApp(root: HTMLElement, net: Net): void {
   let gated = true;
   const voice = new VoiceMesh(net);
   const chat = new Chat(net, () => view?.you.id ?? '');
-  const dock = createDock(() => micToggle(), () => chat.show(), () => jokeButton());
+  const dock = createDock(() => micToggle(), () => chat.show(), () => jokeButton(), () => hostButton());
   document.body.append(dock.el);
   dock.setMic('listen', false);
   chat.onUnread = (n) => { table?.setUnread(n); dock.setUnread(n); };
   // The mic/chat/joke dock exists only inside the game: after login, with a display name.
-  const syncDock = () => dock.show(!gated && !!view && view.you.named);
+  const syncDock = () => {
+    dock.show(!gated && !!view && view.you.named);
+    if (view) dock.setHost(view.hostId === null ? 'none' : view.you.host ? 'me' : 'other');
+  };
+  // Crown button: claim host / open the host menu / ask for a host change (vote).
+  const hostButton = () => {
+    const v = view; if (!v) return;
+    if (v.hostId === null) net.send({ t: 'hostClaim' });
+    else if (v.you.host) openHostMenu(v, net);
+    else if (!v.hostVote) confirmHostChange(() => net.send({ t: 'hostVoteStart' }));
+  };
 
   // First user tap unlocks audio (autoplay policy).
   const unlock = () => { sfx.unlock(); };
@@ -148,7 +158,7 @@ export function startApp(root: HTMLElement, net: Net): void {
       resultShown = false; result?.close(); result = null; clear(root);
       renderLobby(root, v, net, {
         remembered: (() => { try { return localStorage.getItem('name'); } catch { return null; } })(),
-        openScore, openChat: () => chat.show(), openMenu, logout: askLogout,
+        openScore, openChat: () => chat.show(), joke: () => jokeButton(), openMenu, logout: askLogout,
         setName: (n, spec) => {
           safe(() => localStorage.setItem('name', n));
           net.send({ t: 'name', name: n });
@@ -167,7 +177,7 @@ export function startApp(root: HTMLElement, net: Net): void {
         help: () => openHelp(() => table?.hintsOn ?? false, (on) => table?.hint(on), !!view && view.you.seat === view.turnSeat),
         voice: () => { if (view) voiceSheet = openVoice(view, voice); },
         menu: openMenu,
-        micToggle, chat: () => chat.show(), songs: () => { if (view) songs = openSongs(net, () => view!, () => true); },
+        micToggle, chat: () => chat.show(), joke: () => jokeButton(), songs: () => { if (view) songs = openSongs(net, () => view!, () => true); },
       });
       clear(root, table.el);
       music = new MusicCard(net, table.el);
@@ -283,9 +293,6 @@ export function startApp(root: HTMLElement, net: Net): void {
     net.connect();
   }
 
-  // The login check runs during the intro (in parallel), so a valid 12 h cookie goes straight in.
-  const session = net.hasSession?.() ?? Promise.resolve(false);
-  playIntro(root, () => {
-    void session.then((ok) => { if (ok) begin(); else showGate(); });
-  });
+  // Everyone enters the passphrase every time the game is opened (also after a refresh): no auto-login.
+  playIntro(root, () => showGate());
 }

@@ -11,7 +11,7 @@ import { sfx } from '../audio/sfx';
 
 const SUIT: Record<string, string> = { S: '♠', H: '♥', D: '♦', C: '♣' };
 
-export interface TableActions { help(): void; voice(): void; menu(): void; micToggle(): void; songs(): void; chat(): void }
+export interface TableActions { help(): void; voice(): void; menu(): void; micToggle(): void; songs(): void; chat(): void; joke(): void }
 
 export class Table {
   readonly el: HTMLElement;
@@ -38,6 +38,10 @@ export class Table {
   private promptEl = h('div', { class: 'prompt', hidden: true, 'aria-live': 'polite' });
   private finEl = h('div', { class: 'finbar', hidden: true, role: 'status' });
   private clockEl = h('span', { class: 'clock' });
+  private clockTime = h('span', { class: 'clock-t' });
+  private clockEx = h('span', { class: 'ex' });
+  private minHand: SVGLineElement | null = null;
+  private secHand: SVGLineElement | null = null;
   private clockAt = 0;
   private clockTimer = 0;
   private viewSeat = 0;
@@ -55,7 +59,7 @@ export class Table {
     const helpChip = iconButton('help', T.helpOpen, act.help, 'rail-btn');
     const voiceBtn = iconButton('voice', T.voiceTitle, act.voice, 'rail-btn');
     const rail = h('div', { class: 'rail' }, speaker, voiceBtn, helpChip, this.camBtn);
-    const actions = h('div', { class: 'actions' }, this.hintBtn);
+    const actions = h('div', { class: 'actions' }, this.hintBtn, button(T.jokeAyman, 'btn-secondary joke-bottom', () => act.joke(), 'joke'));
     this.el = h('div', { class: 'table' }, this.sceneEl, this.status, this.finEl, rail, actions, this.promptEl, this.confirmEl, this.tip, this.npcTag,
       h('div', { class: 'handbar' }, this.hand));
     this.jokes = new JokeBubble(this.sceneEl, (seat) => this.scene?.seatAnchor(seat) ?? null);
@@ -289,11 +293,37 @@ export class Table {
   /** Unread chat count lives on the dock's chat button; kept here for the accessible label only. */
   setUnread(n: number): void { this.unread = n; }
 
+  /** A real-looking clock: round face, 12 ticks, minute and second hands, plus the digital time. */
+  private buildClock(): void {
+    const ns = 'http://www.w3.org/2000/svg';
+    const mk = (tag: string, attrs: Record<string, string>, parent: Element) => {
+      const e = document.createElementNS(ns, tag);
+      for (const [k, val] of Object.entries(attrs)) e.setAttribute(k, val);
+      parent.append(e);
+      return e;
+    };
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 40 40'); svg.setAttribute('class', 'clock-face'); svg.setAttribute('aria-hidden', 'true');
+    mk('circle', { cx: '20', cy: '20', r: '18', class: 'cf-rim' }, svg);
+    for (let i = 0; i < 12; i++) {
+      const a = (i * Math.PI) / 6, big = i % 3 === 0;
+      mk('line', { x1: String(20 + Math.sin(a) * (big ? 13 : 14.5)), y1: String(20 - Math.cos(a) * (big ? 13 : 14.5)), x2: String(20 + Math.sin(a) * 16), y2: String(20 - Math.cos(a) * 16), class: 'cf-tick' }, svg);
+    }
+    this.minHand = mk('line', { x1: '20', y1: '20', x2: '20', y2: '9', class: 'cf-min' }, svg) as SVGLineElement;
+    this.secHand = mk('line', { x1: '20', y1: '23', x2: '20', y2: '6', class: 'cf-sec' }, svg) as SVGLineElement;
+    mk('circle', { cx: '20', cy: '20', r: '1.8', class: 'cf-dot' }, svg);
+    clear(this.clockEl, svg, this.clockTime, this.clockEx);
+  }
+
   private tickClock(): void {
     const v = this.v; if (!v) return;
     const c = v.clock;
     const el = c.startedAt === null ? 0 : c.elapsedMs + (c.paused ? 0 : Date.now() - this.clockAt);
-    clear(this.clockEl, fmtMs(el), h('span', { class: 'ex' }, ` / ${fmtMs(c.expectedMs)}`));
+    if (!this.minHand) this.buildClock();
+    this.minHand!.setAttribute('transform', `rotate(${((el / 60000) % 60) * 6} 20 20)`);
+    this.secHand!.setAttribute('transform', `rotate(${((el / 1000) % 60) * 6} 20 20)`);
+    this.clockTime.textContent = fmtMs(el);
+    this.clockEx.textContent = ` / ${fmtMs(c.expectedMs)}`;
     this.clockEl.setAttribute('aria-label', `${T.elapsedL} ${fmtMs(el)}, ${T.expected} ${fmtMs(c.expectedMs)}`);
   }
 

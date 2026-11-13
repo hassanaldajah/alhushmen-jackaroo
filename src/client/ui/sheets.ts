@@ -142,3 +142,31 @@ export function openSongs(net: Net, v: () => RoomView, isPlayer: () => boolean):
   return { refresh: drawQ };
 }
 
+
+/** Host menu (the crown button in the dock): start the game / new game / shuffle teams. */
+export function openHostMenu(v: RoomView, net: Net): void {
+  const s = openSheet(T.stHost, { center: true });
+  const go = (f: () => void) => () => { s.close(); f(); };
+  if (v.phase === 'lobby') {
+    const start = button(T.start, 'btn-primary btn-big', go(() => net.send({ t: 'start' })));
+    if (!v.canStart) { start.disabled = true; start.setAttribute('aria-disabled', 'true'); }
+    s.body.append(start);
+    if (!v.canStart) s.body.append(h('p', { class: 'muted' }, T.needTeams + ' - ' + T.needTeamsHow));
+    s.body.append(button(T.shuffle, 'btn-secondary btn-block', go(() => confirmShuffle(() => net.send({ t: 'shuffleTeams' })))));
+  } else if (v.phase === 'playing') {
+    s.body.append(button(T.newGameAbort, 'btn-danger btn-block', go(() => confirmNewGame(() => net.send({ t: 'toLobby' })))));
+  } else {
+    s.body.append(button(T.newGame, 'btn-primary btn-big', go(() => net.send({ t: 'again' }))));
+  }
+}
+
+function confirmShuffle(onYes: () => void): void {
+  const s = openSheet(T.shuffle, { center: true });
+  s.body.append(h('p', { class: 'muted' }, T.shuffleAsk),
+    h('div', { class: 'row' }, button(T.yes, 'btn-primary', () => { s.close(); onYes(); }), button(T.no, 'btn-secondary', () => s.close())));
+}
+
+export function confirmHostChange(onYes: () => void): void {
+  const s = openSheet(T.changeHost, { center: true });
+  s.body.append(h('div', { class: 'row' }, button(T.yes, 'btn-primary', () => { s.close(); onYes(); }), button(T.no, 'btn-secondary', () => s.close())));
+}
