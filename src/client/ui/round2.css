@@ -67,7 +67,7 @@
 .clock-t { font: 700 15px var(--font); font-variant-numeric: tabular-nums; color: var(--cream-50); letter-spacing: .5px; }
 .status .clock { position: static; margin: 0; background: rgba(0,0,0,.38); display: inline-flex !important; }
 @media (max-width: 374px) { .clock .ex { display: none; } .clock-t { font-size: 13px; } .clock-face { width: 24px; height: 24px; } }
-.startbar { position: sticky; bottom: 0; z-index: 6; margin: var(--sp-4) calc(var(--sp-4) * -1) calc((var(--sp-4) + var(--safe-b)) * -1); padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + var(--safe-b)); background: linear-gradient(180deg, rgba(30,20,13,0), rgba(30,20,13,.92) 30%, #1E140D); display: flex; flex-direction: column; gap: var(--sp-2); align-items: center; }
+.startbar { position: sticky; bottom: 0; z-index: 6; min-width: 0; margin: var(--sp-4) calc(var(--sp-4) * -1) 0; padding: var(--sp-3) var(--sp-4) var(--sp-3); background: #1E140D; border-top: 1px solid var(--brass-700); display: flex; flex-direction: column; gap: var(--sp-2); align-items: stretch; }
 .startbar .btn { width: 100%; max-width: 420px; }
 .startbar-note, .startbar .wait-host { font-size: var(--fs-sm); color: var(--cream-200); text-align: center; }
 
@@ -81,3 +81,25 @@
 .dock-joke { width: 56px; min-height: 56px; border-radius: 28px; padding: 2px 0; }
 .dock-joke .dock-lbl { font-size: 11px; line-height: 12px; color: var(--brass-300); font-weight: 600; }
 .joke-bottom { border-color: var(--brass-300); color: var(--brass-300); background: rgba(43,29,18,.88); min-width: 0; padding-inline: var(--sp-4); }
+
+/* ===== Lobby layout fix (phones 320-768): nothing floats over content ===== */
+:root { --dock-row-h: 74px; }
+/* the dock is a bottom toolbar in the lobby: it reserves its own space, never covers content */
+:root:not(.in-table) .dock { left: 0; right: 0; bottom: 0; top: auto; transform: none; flex-direction: row; justify-content: center; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3) calc(var(--sp-2) + var(--safe-b)); background: #1E140D; border-top: 1px solid var(--brass-700); box-shadow: 0 -6px 16px rgba(0,0,0,.45); }
+:root:not(.in-table) .screen.lobby { overflow-x: hidden; padding-bottom: calc(var(--dock-row-h) + var(--safe-b)); }
+/* the start bar is a solid sticky footer right above the toolbar (no see-through, no ghost text) */
+/* sticky offsets are measured inside the container's padding, which already reserves the toolbar's height */
+:root:not(.in-table) .startbar { bottom: 0; }
+/* text never clips: it wraps */
+.startbar, .startbar *, .lobby .muted, .lobby-actions .btn, .person .pbody { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.startbar .btn { max-width: none; }
+.lobby-actions .btn { min-height: var(--tap); }
+/* speech bubbles / toasts without a 3D anchor live in their own top layer, clear of headings and the footer */
+.joke.screen-toast { position: fixed; left: 50%; top: auto; bottom: calc(var(--dock-row-h) + var(--safe-b) + 132px); transform: translateX(-50%); width: min(92vw, 420px); z-index: 40; animation: none; }
+.joke.screen-toast .joke-tail { display: none; }
+:root:not(.in-table) .toasts { top: calc(var(--safe-t) + var(--sp-3)); left: var(--sp-4); right: var(--sp-4); }
+
+.startbar .btn-big { min-height: 52px; }
+.startbar-note, .startbar .wait-host { font-size: 13px; line-height: 18px; }
+/* seat cards on narrow phones: the label wraps (2 lines max) instead of cutting to "..." */
+.tile .nm { white-space: normal; overflow-wrap: anywhere; max-width: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.3; }

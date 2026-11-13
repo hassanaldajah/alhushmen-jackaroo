@@ -53,11 +53,15 @@ export class JokeBubble {
   /** Generic bubble at an anchor (the pirate's head, or the screen top when there is no 3D table). */
   say(text: string, anchor: Anchor, o: { tag?: string; ms?: number; onDone?: () => void } = {}): void {
     this.hide();
+    // No 3D anchor on a pre-game screen (lobby): a fixed top-layer toast above the footer, never over headings.
+    const toast = this.host.id === 'app' && anchor() === null;
     const live = h('span', { role: 'status', 'aria-live': 'polite' }, text);
     const el = h('div', { class: 'joke' + (reducedMotion() ? ' rm' : ''), onpointerdown: (e: Event) => { e.stopPropagation(); this.hide(); } },
       o.tag ? h('span', { class: 'joke-tag' }, o.tag) : null, live, h('span', { class: 'joke-tail', 'aria-hidden': 'true' }));
-    this.host.append(el);
+    if (toast) el.classList.add('screen-toast');
+    (toast ? document.body : this.host).append(el); // the toast must survive lobby re-renders (clear(root))
     const place = () => {
+      if (toast) return;
       const a = anchor();
       const w = this.host.clientWidth, hh = this.host.clientHeight;
       let bw = Math.min(260, w - 24);
