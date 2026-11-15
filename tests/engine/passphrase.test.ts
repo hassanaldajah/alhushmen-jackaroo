@@ -67,3 +67,18 @@ describe('deploy config', () => {
     expect(/^ALLOWED_ORIGINS\s*=\s*"(.*)"/m.exec(toml as string)?.[1]).toBe('https://alhushmen.al-hassan.dev');
   });
 });
+
+describe('digits typed on an Arabic phone keyboard (synthetic phrase)', () => {
+  const plain = 'كأية منى ها 1357';
+  it('Arabic-Indic and Persian digits equal plain digits, both ways', async () => {
+    const indic = 'كأية منى ها ١٣٥٧';
+    const persian = 'كأية منى ها ۱۳۵۷';
+    expect(normalizePhrase(indic)).toBe(normalizePhrase(plain));
+    expect(normalizePhrase(persian)).toBe(normalizePhrase(plain));
+    expect(await phraseMatches(indic, plain, SECRET)).toBe(true);
+    expect(await phraseMatches(plain, persian, SECRET)).toBe(true);
+  });
+  it('different digits still fail', async () => {
+    expect(await phraseMatches('كأية منى ها 1358', plain, SECRET)).toBe(false);
+  });
+});

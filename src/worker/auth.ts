@@ -21,6 +21,8 @@ const HEH_RE = /[\u0629\u06BE\u06C0-\u06C3\u06D5]/g; // ta marbuta, heh doachash
 export function normalizePhrase(input: string): string {
   return input.normalize('NFKC').replace(STRIP_RE, '')
     .replace(ALEF_RE, '\u0627').replace(YA_RE, '\u064A').replace(KAF_RE, '\u0643').replace(HEH_RE, '\u0647')
+    // Arabic-Indic and Persian digits typed by a phone keyboard match plain 0-9.
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660)).replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
     .replace(/\s+/gu, ' ').trim();
 }
 
